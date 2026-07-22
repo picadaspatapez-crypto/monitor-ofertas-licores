@@ -1,13 +1,35 @@
-# Monitor Licor3B — versión 1
+# Monitor de ofertas de licores — v2
 
-Esta versión revisa la primera página de ofertas de Licor3B y envía a Telegram los productos que:
+Esta versión:
 
-- cuestan hasta $30.000;
-- muestran al menos 20% de descuento;
-- caben dentro de un presupuesto de $100.000;
-- permiten sugerir hasta 3 unidades.
+- separa configuración, scraper, base de datos y Telegram;
+- guarda productos en PostgreSQL;
+- registra una observación de precio en cada ejecución;
+- distingue productos nuevos y bajas de precio;
+- evita tratar cada ejecución como si fuera una oferta nueva.
 
-## Importante
+## Estructura
 
-El porcentaje usado todavía corresponde al descuento publicado por la tienda.
-No representa aún el margen neto de reventa en Marketplace o Mercado Libre.
+```text
+app/
+├── config.py
+├── database.py
+├── models.py
+├── repository.py
+├── runner.py
+├── scrapers/
+│   └── licor3b.py
+└── services/
+    └── telegram.py
+```
+
+## Variables requeridas
+
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `DATABASE_URL`
+- `MAX_PRODUCT_PRICE`
+- `TOTAL_BUDGET`
+- `MAX_UNITS_PER_PRODUCT`
+- `MIN_TARGET_MARGIN`
+- `DELIVERY_COMMUNE`
