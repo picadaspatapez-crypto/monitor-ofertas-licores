@@ -1,17 +1,13 @@
-# Monitor de ofertas de licores
+# Monitor Licor3B — versión 1
 
-Primera prueba del sistema: validar conexión entre Railway y Telegram.
+Esta versión revisa la primera página de ofertas de Licor3B y envía a Telegram los productos que:
 
-## Variables requeridas
+- cuestan hasta $30.000;
+- muestran al menos 20% de descuento;
+- caben dentro de un presupuesto de $100.000;
+- permiten sugerir hasta 3 unidades.
 
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+## Importante
 
-## Ejecución local
-
-```bash
-pip install -r requirements.txt
-python main.py
-```
-
-Las credenciales deben almacenarse como variables de entorno y nunca subirse a GitHub.
+El porcentaje usado todavía corresponde al descuento publicado por la tienda.
+No representa aún el margen neto de reventa en Marketplace o Mercado Libre.
