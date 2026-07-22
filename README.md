@@ -33,3 +33,22 @@ app/
 - `MAX_UNITS_PER_PRODUCT`
 - `MIN_TARGET_MARGIN`
 - `DELIVERY_COMMUNE`
+
+## Migraciones y seguimiento operativo
+
+Esta versión incorpora Alembic y agrega:
+
+- `stores`: registro de tiendas;
+- `scrape_runs`: resultado de cada ejecución;
+- `alerts`: prevención de avisos duplicados;
+- `products.store_id`: transición hacia múltiples tiendas;
+- `price_observations.scrape_run_id`: trazabilidad de observaciones.
+
+El contenedor ejecuta automáticamente:
+
+```bash
+alembic upgrade head
+python main.py
+```
+
+La primera migración es defensiva y conserva las tablas y datos creados por la versión anterior.
