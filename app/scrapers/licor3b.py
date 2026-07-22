@@ -1,12 +1,13 @@
 import re
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
-
-OFFERS_URL = "https://licor3b.cl/product-category/ofertas/"
+BASE_URL = "https://licor3b.cl"
+OFFERS_URL = f"{BASE_URL}/product-category/ofertas/"
 
 
 @dataclass(frozen=True)
@@ -19,9 +20,13 @@ class ScrapedProduct:
     discount_pct: float
 
 
-def _parse_clp(text: str) -> Optional[int]:
-    digits = re.sub(r"[^\d]", "", text or "")
-    return int(digits) if digits else None
+def _all_prices(text: str) -> list[int]:
+    values = []
+    for raw in re.findall(r"\$\s*([\d.\s]+)", text or ""):
+        digits = re.sub(r"[^\d]", "", raw)
+        if digits:
+            values.append(int(digits))
+    return values
 
 
 def _discount(regular: Optional[int], current: int) -> float:
@@ -30,67 +35,122 @@ def _discount(regular: Optional[int], current: int) -> float:
     return (regular - current) / regular
 
 
+def _clean_name(text: str) -> str:
+    text = re.sub(r"^-\d+%\s*", "", text.strip())
+    text = re.sub(r"\$\s*[\d.\s]+", "", text)
+    return " ".join(text.split()).strip(" -|")
+
+
+def _candidate_links(soup: BeautifulSoup) -> list[Tag]:
+    selectors = [
+        "a.woocommerce-LoopProduct-link",
+        "a.woocommerce-loop-product__link",
+        "li.product a[href]",
+        ".product-small a[href]",
+        ".product-item a[href]",
+        ".product a[href]",
+        "a[href*='/producto/']",
+        "a[href*='/product/']",
+    ]
+    found = []
+    seen = set()
+
+    for selector in selectors:
+        for node in soup.select(selector):
+            marker = id(node)
+            if marker not in seen:
+                seen.add(marker)
+                found.append(node)
+
+    return found
+
+
 def scrape() -> list[ScrapedProduct]:
     response = requests.get(
         OFFERS_URL,
         headers={
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 Chrome/126 Safari/537.36"
-            )
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0 Safari/537.36"
+            ),
+            "Accept-Language": "es-CL,es;q=0.9",
         },
         timeout=30,
     )
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")
-    results: list[ScrapedProduct] = []
+    links = _candidate_links(soup)
+    products: dict[str, ScrapedProduct] = {}
 
-    for card in soup.select("li.product"):
-        title = card.select_one(
-            "h2.woocommerce-loop-product__title, "
-            ".woocommerce-loop-product__title, .product-title"
-        )
-        link = card.select_one("a.woocommerce-LoopProduct-link, a[href]")
-        price = card.select_one(".price")
-
-        if not title or not link or not price:
+    for link in links:
+        href = (link.get("href") or "").strip()
+        if not href:
             continue
 
-        name = " ".join(title.get_text(" ", strip=True).split())
-        url = (link.get("href") or "").strip()
+        url = urljoin(BASE_URL, href)
+        if url.rstrip("/") == OFFERS_URL.rstrip("/"):
+            continue
 
-        regular_node = price.select_one("del .woocommerce-Price-amount, del")
-        current_node = price.select_one("ins .woocommerce-Price-amount, ins")
+        container = link
+        for parent in link.parents:
+            if not isinstance(parent, Tag):
+                continue
+            text = parent.get_text(" ", strip=True)
+            if "$" in text and len(text) < 1200:
+                container = parent
+                break
 
-        if current_node:
-            current_price = _parse_clp(current_node.get_text(" ", strip=True))
-        else:
-            amounts = price.select(".woocommerce-Price-amount")
-            text = amounts[-1].get_text(" ", strip=True) if amounts else price.get_text(" ", strip=True)
-            current_price = _parse_clp(text)
+        text = container.get_text(" ", strip=True)
+        prices = _all_prices(text)
+        if not prices:
+            continue
 
+        title_node = container.select_one(
+            ".woocommerce-loop-product__title, "
+            ".product-title, .name, h2, h3, h4"
+        )
+        name = _clean_name(
+            title_node.get_text(" ", strip=True)
+            if title_node
+            else link.get_text(" ", strip=True)
+        )
+
+        if not name or name.upper() == "LLEVAR":
+            previous = container.find_previous("a", href=True)
+            if previous:
+                name = _clean_name(previous.get_text(" ", strip=True))
+                url = urljoin(BASE_URL, previous.get("href", ""))
+
+        if not name or len(name) < 4:
+            continue
+
+        current_price = prices[-1]
         regular_price = (
-            _parse_clp(regular_node.get_text(" ", strip=True))
-            if regular_node
+            prices[-2]
+            if len(prices) >= 2 and prices[-2] > current_price
             else None
         )
 
-        if not name or not url or current_price is None:
+        if current_price < 500 or current_price > 1_000_000:
             continue
 
-        results.append(
-            ScrapedProduct(
-                store="Licor3B",
-                name=name,
-                url=url,
-                current_price=current_price,
-                regular_price=regular_price,
-                discount_pct=_discount(regular_price, current_price),
-            )
+        products[url] = ScrapedProduct(
+            store="Licor3B",
+            name=name,
+            url=url,
+            current_price=current_price,
+            regular_price=regular_price,
+            discount_pct=_discount(regular_price, current_price),
         )
 
-    if not results:
-        raise RuntimeError("No se encontraron productos en Licor3B.")
+    if not products:
+        raise RuntimeError(
+            "No se encontraron productos en Licor3B. "
+            f"HTTP={response.status_code}, "
+            f"enlaces candidatos={len(links)}, "
+            f"HTML={len(response.text)} caracteres."
+        )
 
-    return results
+    return list(products.values())
