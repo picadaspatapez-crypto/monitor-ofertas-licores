@@ -30,26 +30,6 @@ def clp(value: int) -> str:
     return "$" + f"{value:,}".replace(",", ".")
 
 
-def _offer_items(items: list[SavedProduct]) -> list[SavedProduct]:
-    """Devuelve las ofertas con descuento informado, ordenadas de mayor a menor."""
-    offers = [
-        saved
-        for saved in items
-        if saved.item.regular_price is not None
-        and saved.item.regular_price > saved.item.current_price
-        and saved.item.discount_pct > 0
-    ]
-
-    return sorted(
-        offers,
-        key=lambda saved: (
-            saved.item.discount_pct,
-            saved.item.regular_price - saved.item.current_price,
-        ),
-        reverse=True,
-    )
-
-
 def _status_label(saved: SavedProduct) -> str:
     if saved.is_new:
         return "🆕 Nuevo"
@@ -58,30 +38,58 @@ def _status_label(saved: SavedProduct) -> str:
     return "Sin cambio"
 
 
+def _ranked_items(items: list[SavedProduct]) -> list[SavedProduct]:
+    """
+    Prioridad:
+    1. Descuento informado disponible.
+    2. Productos que bajaron de precio.
+    3. Productos nuevos.
+    4. Menor precio actual.
+    """
+    return sorted(
+        items,
+        key=lambda saved: (
+            saved.item.regular_price is not None
+            and saved.item.discount_pct > 0,
+            saved.item.discount_pct,
+            saved.price_dropped,
+            saved.is_new,
+            -saved.item.current_price,
+        ),
+        reverse=True,
+    )
+
+
 def build_messages(
     saved_products: list[SavedProduct],
     total_products: int,
 ) -> list[str]:
-    offers = _offer_items(saved_products)
-    selected = offers[:REPORT_LIMIT]
+    selected = _ranked_items(saved_products)[:REPORT_LIMIT]
+    with_reported_discount = sum(
+        1
+        for saved in saved_products
+        if saved.item.regular_price is not None
+        and saved.item.discount_pct > 0
+    )
 
     summary = [
         "📊 Monitor Licor3B actualizado",
         "",
         f"Productos revisados: {total_products}",
-        f"Productos con descuento informado: {len(offers)}",
-        f"Ofertas mostradas: {len(selected)}",
+        f"Con descuento informado: {with_reported_discount}",
+        f"Productos mostrados: {len(selected)}",
         "",
-        "ℹ️ El porcentaje corresponde al descuento declarado por Licor3B.",
-        "Aún no representa una comparación real con otras tiendas.",
+        "ℹ️ Todos pertenecen a la categoría Ofertas de Licor3B.",
+        "El descuento informado solo aparece cuando la tienda publica",
+        "precio normal y precio actual.",
     ]
 
     if not selected:
         summary.extend(
             [
                 "",
-                "No se encontraron productos con precio normal y precio oferta.",
-                "Los precios igualmente quedaron guardados en PostgreSQL.",
+                "No fue posible obtener productos para mostrar.",
+                "Revisa los logs de Railway.",
             ]
         )
         return ["\n".join(summary)]
@@ -91,25 +99,34 @@ def build_messages(
     for start in range(0, len(selected), ITEMS_PER_MESSAGE):
         group = selected[start : start + ITEMS_PER_MESSAGE]
         lines = [
-            f"🏷️ Ofertas Licor3B {start + 1}-{start + len(group)}",
+            f"🏷️ Productos en oferta {start + 1}-{start + len(group)}",
             "",
         ]
 
         for position, saved in enumerate(group, start=start + 1):
             item = saved.item
-            saving = (
-                item.regular_price - item.current_price
-                if item.regular_price is not None
-                else 0
-            )
 
             lines.extend(
                 [
                     f"{position}. {item.name}",
-                    f"Precio oferta: {clp(item.current_price)}",
-                    f"Precio normal informado: {clp(item.regular_price)}",
-                    f"Descuento informado: {item.discount_pct:.0%}",
-                    f"Ahorro informado: {clp(saving)}",
+                    f"Precio actual: {clp(item.current_price)}",
+                ]
+            )
+
+            if item.regular_price is not None and item.discount_pct > 0:
+                saving = item.regular_price - item.current_price
+                lines.extend(
+                    [
+                        f"Precio normal informado: {clp(item.regular_price)}",
+                        f"Descuento informado: {item.discount_pct:.0%}",
+                        f"Ahorro informado: {clp(saving)}",
+                    ]
+                )
+            else:
+                lines.append("Descuento informado: no disponible")
+
+            lines.extend(
+                [
                     f"Estado: {_status_label(saved)}",
                     item.url,
                     "",
@@ -123,16 +140,12 @@ def build_messages(
 
 def run() -> int:
     settings = None
-    engine = None
     SessionLocal = None
     scrape_run_id = None
 
     try:
         settings = Settings.from_env()
         engine, SessionLocal = create_database(settings.database_url)
-
-        # Compatibilidad de arranque. Alembic continúa siendo la fuente
-        # de verdad para la evolución del esquema.
         Base.metadata.create_all(engine)
 
         with SessionLocal() as session:
@@ -143,7 +156,6 @@ def run() -> int:
 
         scraped = scrape()
         saved_products: list[SavedProduct] = []
-
         created = 0
         updated = 0
         price_changes = 0
@@ -157,10 +169,7 @@ def run() -> int:
 
             for item in scraped:
                 product, is_new, price_dropped = save_product(
-                    session,
-                    item,
-                    store,
-                    scrape_run,
+                    session, item, store, scrape_run
                 )
 
                 created += int(is_new)
@@ -184,7 +193,6 @@ def run() -> int:
                 products_updated=updated,
                 price_changes=price_changes,
             )
-
             store.last_success_at = scrape_run.finished_at
             session.commit()
 
@@ -197,12 +205,9 @@ def run() -> int:
                 message,
             )
 
-        offers_count = len(_offer_items(saved_products))
-
         print(
             "Proceso completado. "
             f"Productos procesados: {len(scraped)}. "
-            f"Ofertas con descuento informado: {offers_count}. "
             f"Mensajes Telegram: {len(messages)}"
         )
         return 0
@@ -219,11 +224,9 @@ def run() -> int:
                             status="failed",
                             error_message=str(exc)[:2000],
                         )
-
                         store = session.get(Store, scrape_run.store_id)
                         if store is not None:
                             store.last_error_at = scrape_run.finished_at
-
                         session.commit()
 
             except Exception as tracking_error:

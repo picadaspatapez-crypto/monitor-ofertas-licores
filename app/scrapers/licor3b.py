@@ -2,7 +2,7 @@ import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import (
@@ -18,8 +18,10 @@ BASE_URL = "https://licor3b.cl"
 OFFERS_URL = f"{BASE_URL}/product-category/ofertas/"
 NAVIGATION_TIMEOUT_MS = 60_000
 PAGE_SETTLE_MS = 4_000
-MAX_PAGES = 50
-MAX_SCROLL_ROUNDS = 12
+MAX_PRODUCT_PAGES = 50
+MAX_CAPTCHA_RETRIES = 4
+MAX_SCROLL_ROUNDS = 10
+MAX_CONSECUTIVE_EMPTY_PAGES = 2
 
 
 @dataclass(frozen=True)
@@ -49,41 +51,14 @@ def _clean_url(raw_url: str) -> str:
     )
 
 
-def _normalize_page_url(raw_url: str) -> str:
-    absolute = urljoin(BASE_URL, raw_url.strip())
-    parsed = urlparse(absolute)
-
-    if parsed.netloc.lower() != urlparse(BASE_URL).netloc.lower():
-        return ""
-
-    path = parsed.path.rstrip("/") + "/"
-    query_items = parse_qsl(parsed.query, keep_blank_values=True)
-
-    # Evita URLs híbridas como /page/3/?product-page=4.
-    if re.search(r"/page/\d+/$", path):
-        query_items = [
-            (key, value)
-            for key, value in query_items
-            if key.lower() not in {"product-page", "product_page", "paged"}
-        ]
-
-    query = urlencode(query_items)
-
-    return urlunparse(
-        (
-            parsed.scheme or "https",
-            parsed.netloc.lower(),
-            path,
-            "",
-            query,
-            "",
-        )
-    )
+def _product_page_url(page_number: int) -> str:
+    if page_number <= 1:
+        return OFFERS_URL
+    return f"{OFFERS_URL}?{urlencode({'product-page': page_number})}"
 
 
 def _valid_product_url(url: str) -> bool:
     lowered = url.lower()
-
     excluded = (
         "/cart",
         "/carrito",
@@ -93,7 +68,6 @@ def _valid_product_url(url: str) -> bool:
         "/categoria-producto/",
         "add-to-cart=",
     )
-
     if any(value in lowered for value in excluded):
         return False
 
@@ -178,10 +152,8 @@ def _parse_card(card: Tag) -> Optional[ScrapedProduct]:
 
     title_node = card.select_one(
         ".woocommerce-loop-product__title, "
-        ".product-title, "
-        ".name, h2, h3, h4"
+        ".product-title, .name, h2, h3, h4"
     )
-
     name = _clean_name(
         title_node.get_text(" ", strip=True)
         if title_node is not None
@@ -234,18 +206,22 @@ def _create_context(browser: Browser) -> BrowserContext:
     )
 
 
-def _wait_for_real_page(page: Page) -> None:
+def _is_robot_challenge(page: Page, html: str) -> bool:
+    lowered = html.lower()
+    return (
+        "robot challenge screen" in lowered
+        or "/.well-known/sgcaptcha/" in page.url.lower()
+        or "sgcaptcha" in lowered
+    )
+
+
+def _wait_for_page(page: Page) -> None:
     try:
         page.wait_for_load_state("networkidle", timeout=20_000)
     except PlaywrightTimeoutError:
         pass
 
     page.wait_for_timeout(PAGE_SETTLE_MS)
-
-    for _ in range(5):
-        if len(page.content()) > 5_000:
-            return
-        page.wait_for_timeout(3_000)
 
 
 def _scroll_until_stable(page: Page) -> None:
@@ -255,7 +231,7 @@ def _scroll_until_stable(page: Page) -> None:
     for _ in range(MAX_SCROLL_ROUNDS):
         current_height = page.evaluate("document.body.scrollHeight")
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(1_200)
+        page.wait_for_timeout(1_000)
         new_height = page.evaluate("document.body.scrollHeight")
 
         if new_height == current_height == previous_height:
@@ -264,112 +240,98 @@ def _scroll_until_stable(page: Page) -> None:
             stable_rounds = 0
 
         previous_height = new_height
-
         if stable_rounds >= 2:
             break
 
 
-def _next_page_url(html: str, current_url: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
-
-    selectors = (
-        "link[rel='next'][href]",
-        "a.next.page-numbers[href]",
-        "a.next[href]",
-        ".woocommerce-pagination a.next[href]",
-        "nav.pagination a.next[href]",
-    )
-
-    for selector in selectors:
-        node = soup.select_one(selector)
-        if node is None:
-            continue
-
-        href = str(node.get("href") or "").strip()
-        if not href:
-            continue
-
-        normalized = _normalize_page_url(href)
-        if not normalized or normalized == current_url:
-            continue
-
-        lowered = normalized.lower()
-        if (
-            "/product-category/ofertas/" in lowered
-            or "/categoria-producto/ofertas/" in lowered
-        ):
-            return normalized
-
-    return ""
-
-
-def _diagnose_failure(
-    *,
+def _open_with_captcha_retries(
+    browser: Browser,
+    context: BrowserContext,
     page: Page,
-    html: str,
-    pages_visited: int,
-    cards_seen: int,
-) -> None:
-    preview = " ".join(
-        BeautifulSoup(html[:5_000], "html.parser")
-        .get_text(" ", strip=True)
-        .split()
-    )
+    url: str,
+) -> tuple[Page, str, Optional[int]]:
+    last_html = ""
+    last_status: Optional[int] = None
 
-    print("=== DIAGNÓSTICO PLAYWRIGHT LICOR3B ===", file=sys.stderr)
-    print(f"final_url={page.url}", file=sys.stderr)
-    print(f"title={page.title()!r}", file=sys.stderr)
-    print(f"html_chars={len(html)}", file=sys.stderr)
-    print(f"pages_visited={pages_visited}", file=sys.stderr)
-    print(f"cards_seen={cards_seen}", file=sys.stderr)
-    print(f"html_preview={preview[:1_500]}", file=sys.stderr)
-    print("=== FIN DIAGNÓSTICO ===", file=sys.stderr)
+    for attempt in range(1, MAX_CAPTCHA_RETRIES + 1):
+        response = page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=NAVIGATION_TIMEOUT_MS,
+        )
+        last_status = response.status if response is not None else None
+        _wait_for_page(page)
+        last_html = page.content()
+
+        if not _is_robot_challenge(page, last_html):
+            return page, last_html, last_status
+
+        print(
+            f"Licor3B CAPTCHA: intento {attempt}/{MAX_CAPTCHA_RETRIES}, "
+            f"url={page.url}",
+            flush=True,
+        )
+
+        page.wait_for_timeout(4_000)
+
+        if attempt < MAX_CAPTCHA_RETRIES:
+            # Un contexto nuevo cambia cookies/sesión y suele resolver
+            # la respuesta intermitente de SiteGround.
+            try:
+                context.close()
+            except Exception:
+                pass
+            context = _create_context(browser)
+            page = context.new_page()
+
+    return page, last_html, last_status
 
 
 def scrape() -> list[ScrapedProduct]:
     all_products: dict[str, ScrapedProduct] = {}
-    visited: set[str] = set()
-    current_url = _normalize_page_url(OFFERS_URL)
-
     pages_visited = 0
     cards_seen = 0
+    consecutive_empty = 0
     last_html = ""
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ],
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
 
+        context = _create_context(browser)
+        page = context.new_page()
+
         try:
-            context = _create_context(browser)
-            page = context.new_page()
+            for page_number in range(1, MAX_PRODUCT_PAGES + 1):
+                requested_url = _product_page_url(page_number)
 
-            while current_url and pages_visited < MAX_PAGES:
-                if current_url in visited:
-                    print(
-                        f"Licor3B: se detuvo por URL repetida: {current_url}",
-                        flush=True,
-                    )
-                    break
-
-                visited.add(current_url)
-
-                response = page.goto(
-                    current_url,
-                    wait_until="domcontentloaded",
-                    timeout=NAVIGATION_TIMEOUT_MS,
+                page, last_html, status = _open_with_captcha_retries(
+                    browser,
+                    context,
+                    page,
+                    requested_url,
                 )
 
-                _wait_for_real_page(page)
+                if _is_robot_challenge(page, last_html):
+                    if all_products:
+                        print(
+                            "Licor3B: CAPTCHA persistente; se conserva el "
+                            "catálogo ya recolectado.",
+                            flush=True,
+                        )
+                        break
+
+                    raise RuntimeError(
+                        "Licor3B mantuvo el Robot Challenge después de "
+                        f"{MAX_CAPTCHA_RETRIES} intentos."
+                    )
+
                 _scroll_until_stable(page)
-
                 last_html = page.content()
-                page_products, page_cards = _parse_html(last_html)
 
+                page_products, page_cards = _parse_html(last_html)
                 pages_visited += 1
                 cards_seen += page_cards
 
@@ -377,45 +339,43 @@ def scrape() -> list[ScrapedProduct]:
                 all_products.update(page_products)
                 new_unique = len(all_products) - before
 
-                status = response.status if response is not None else None
-                final_page_url = _normalize_page_url(page.url)
-
                 print(
-                    "Licor3B página "
-                    f"{pages_visited}: HTTP={status}, "
+                    "Licor3B product-page "
+                    f"{page_number}: HTTP={status}, "
                     f"tarjetas={page_cards}, "
                     f"productos_página={len(page_products)}, "
                     f"nuevos_únicos={new_unique}, "
                     f"productos_únicos={len(all_products)}, "
-                    f"url={final_page_url}",
+                    f"url={page.url}",
                     flush=True,
                 )
 
-                next_url = _next_page_url(last_html, final_page_url)
+                if new_unique == 0:
+                    consecutive_empty += 1
+                else:
+                    consecutive_empty = 0
 
-                # Protección contra paginación defectuosa:
-                # si una página no aporta nada nuevo, no seguimos indefinidamente.
-                if pages_visited > 1 and new_unique == 0:
+                if consecutive_empty >= MAX_CONSECUTIVE_EMPTY_PAGES:
                     print(
-                        "Licor3B: página sin productos nuevos; "
-                        "se detiene la paginación.",
+                        "Licor3B: dos páginas consecutivas sin productos "
+                        "nuevos; termina la paginación.",
                         flush=True,
                     )
                     break
 
-                current_url = next_url
-
             if not all_products:
-                _diagnose_failure(
-                    page=page,
-                    html=last_html,
-                    pages_visited=pages_visited,
-                    cards_seen=cards_seen,
+                preview = " ".join(
+                    BeautifulSoup(last_html[:5_000], "html.parser")
+                    .get_text(" ", strip=True)
+                    .split()
                 )
-                raise RuntimeError(
-                    "Playwright abrió Licor3B, pero no encontró productos. "
-                    "Revisa el bloque DIAGNÓSTICO PLAYWRIGHT LICOR3B."
-                )
+                print("=== DIAGNÓSTICO LICOR3B ===", file=sys.stderr)
+                print(f"final_url={page.url}", file=sys.stderr)
+                print(f"title={page.title()!r}", file=sys.stderr)
+                print(f"html_chars={len(last_html)}", file=sys.stderr)
+                print(f"html_preview={preview[:1_500]}", file=sys.stderr)
+                print("=== FIN DIAGNÓSTICO ===", file=sys.stderr)
+                raise RuntimeError("Licor3B no entregó productos.")
 
             print(
                 "Resumen Licor3B: "
@@ -430,4 +390,8 @@ def scrape() -> list[ScrapedProduct]:
                 key=lambda product: product.name.casefold(),
             )
         finally:
+            try:
+                context.close()
+            except Exception:
+                pass
             browser.close()
