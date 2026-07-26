@@ -3,13 +3,10 @@ from dataclasses import dataclass
 
 from app.config import Settings
 from app.database import Base, create_database
-from app.models import Alert, Product, ScrapeRun, Store
+from app.models import Product, ScrapeRun, Store
 from app.repository import (
     finish_scrape_run,
     get_or_create_store,
-    mark_alerts_failed,
-    mark_alerts_sent,
-    reserve_alert,
     save_product,
     start_scrape_run,
 )
@@ -17,69 +14,111 @@ from app.scrapers.licor3b import ScrapedProduct, scrape
 from app.services.telegram import send_message
 
 
+REPORT_LIMIT = 20
+ITEMS_PER_MESSAGE = 10
+
+
 @dataclass
-class Candidate:
+class SavedProduct:
     item: ScrapedProduct
     product: Product
-    alert: Alert
+    is_new: bool
+    price_dropped: bool
 
 
 def clp(value: int) -> str:
     return "$" + f"{value:,}".replace(",", ".")
 
 
-def qualifies(item: ScrapedProduct, settings: Settings) -> bool:
-    return (
-        item.current_price <= settings.max_product_price
-        and item.discount_pct >= settings.min_target_margin
+def _offer_items(items: list[SavedProduct]) -> list[SavedProduct]:
+    """Devuelve las ofertas con descuento informado, ordenadas de mayor a menor."""
+    offers = [
+        saved
+        for saved in items
+        if saved.item.regular_price is not None
+        and saved.item.regular_price > saved.item.current_price
+        and saved.item.discount_pct > 0
+    ]
+
+    return sorted(
+        offers,
+        key=lambda saved: (
+            saved.item.discount_pct,
+            saved.item.regular_price - saved.item.current_price,
+        ),
+        reverse=True,
     )
 
 
-def build_message(
-    new_candidates: list[Candidate],
-    dropped_candidates: list[Candidate],
-    total: int,
-    settings: Settings,
-) -> str:
-    lines = [
+def _status_label(saved: SavedProduct) -> str:
+    if saved.is_new:
+        return "🆕 Nuevo"
+    if saved.price_dropped:
+        return "📉 Bajó de precio"
+    return "Sin cambio"
+
+
+def build_messages(
+    saved_products: list[SavedProduct],
+    total_products: int,
+) -> list[str]:
+    offers = _offer_items(saved_products)
+    selected = offers[:REPORT_LIMIT]
+
+    summary = [
         "📊 Monitor Licor3B actualizado",
         "",
-        f"Productos revisados: {total}",
-        f"Nuevas oportunidades: {len(new_candidates)}",
-        f"Bajas de precio: {len(dropped_candidates)}",
+        f"Productos revisados: {total_products}",
+        f"Productos con descuento informado: {len(offers)}",
+        f"Ofertas mostradas: {len(selected)}",
+        "",
+        "ℹ️ El porcentaje corresponde al descuento declarado por Licor3B.",
+        "Aún no representa una comparación real con otras tiendas.",
     ]
 
-    selected = new_candidates[:5] + dropped_candidates[:5]
-
     if not selected:
-        lines.extend(
+        summary.extend(
             [
                 "",
-                "No hay alertas nuevas que cumplan los filtros.",
-                "Los precios quedaron guardados en PostgreSQL.",
+                "No se encontraron productos con precio normal y precio oferta.",
+                "Los precios igualmente quedaron guardados en PostgreSQL.",
             ]
         )
-        return "\n".join(lines)
+        return ["\n".join(summary)]
 
-    lines.append("")
-    for candidate in selected:
-        item = candidate.item
-        units = min(
-            settings.max_units_per_product,
-            settings.total_budget // item.current_price,
-        )
-        lines.extend(
-            [
-                f"• {item.name}",
-                f"  Precio: {clp(item.current_price)}",
-                f"  Descuento: {item.discount_pct:.0%}",
-                f"  Compra posible: {units} unidad(es)",
-                f"  {item.url}",
-                "",
-            ]
-        )
+    messages = ["\n".join(summary)]
 
-    return "\n".join(lines)
+    for start in range(0, len(selected), ITEMS_PER_MESSAGE):
+        group = selected[start : start + ITEMS_PER_MESSAGE]
+        lines = [
+            f"🏷️ Ofertas Licor3B {start + 1}-{start + len(group)}",
+            "",
+        ]
+
+        for position, saved in enumerate(group, start=start + 1):
+            item = saved.item
+            saving = (
+                item.regular_price - item.current_price
+                if item.regular_price is not None
+                else 0
+            )
+
+            lines.extend(
+                [
+                    f"{position}. {item.name}",
+                    f"Precio oferta: {clp(item.current_price)}",
+                    f"Precio normal informado: {clp(item.regular_price)}",
+                    f"Descuento informado: {item.discount_pct:.0%}",
+                    f"Ahorro informado: {clp(saving)}",
+                    f"Estado: {_status_label(saved)}",
+                    item.url,
+                    "",
+                ]
+            )
+
+        messages.append("\n".join(lines).rstrip())
+
+    return messages
 
 
 def run() -> int:
@@ -91,7 +130,9 @@ def run() -> int:
     try:
         settings = Settings.from_env()
         engine, SessionLocal = create_database(settings.database_url)
-        # Compatibilidad de arranque. Alembic será la fuente de verdad del esquema.
+
+        # Compatibilidad de arranque. Alembic continúa siendo la fuente
+        # de verdad para la evolución del esquema.
         Base.metadata.create_all(engine)
 
         with SessionLocal() as session:
@@ -101,8 +142,8 @@ def run() -> int:
             session.commit()
 
         scraped = scrape()
-        new_candidates: list[Candidate] = []
-        dropped_candidates: list[Candidate] = []
+        saved_products: list[SavedProduct] = []
+
         created = 0
         updated = 0
         price_changes = 0
@@ -110,42 +151,30 @@ def run() -> int:
         with SessionLocal() as session:
             store = get_or_create_store(session)
             scrape_run = session.get(ScrapeRun, scrape_run_id)
+
             if scrape_run is None:
                 raise RuntimeError("No se pudo recuperar la ejecución activa.")
 
             for item in scraped:
                 product, is_new, price_dropped = save_product(
-                    session, item, store, scrape_run
+                    session,
+                    item,
+                    store,
+                    scrape_run,
                 )
+
                 created += int(is_new)
                 updated += int(not is_new)
                 price_changes += int(price_dropped)
 
-                if not qualifies(item, settings):
-                    continue
-
-                alert_type = "new_opportunity" if is_new else "price_drop"
-                if not (is_new or price_dropped):
-                    continue
-
-                alert = reserve_alert(
-                    session,
-                    product,
-                    alert_type=alert_type,
-                    reason=(
-                        "Producto nuevo que cumple los filtros"
-                        if is_new
-                        else "Baja de precio que cumple los filtros"
-                    ),
+                saved_products.append(
+                    SavedProduct(
+                        item=item,
+                        product=product,
+                        is_new=is_new,
+                        price_dropped=price_dropped,
+                    )
                 )
-                if alert is None:
-                    continue
-
-                candidate = Candidate(item=item, product=product, alert=alert)
-                if is_new:
-                    new_candidates.append(candidate)
-                else:
-                    dropped_candidates.append(candidate)
 
             finish_scrape_run(
                 scrape_run,
@@ -155,40 +184,27 @@ def run() -> int:
                 products_updated=updated,
                 price_changes=price_changes,
             )
+
             store.last_success_at = scrape_run.finished_at
             session.commit()
 
-        selected = new_candidates[:5] + dropped_candidates[:5]
-        message = build_message(
-            new_candidates,
-            dropped_candidates,
-            len(scraped),
-            settings,
-        )
+        messages = build_messages(saved_products, len(scraped))
 
-        try:
+        for message in messages:
             send_message(
                 settings.telegram_bot_token,
                 settings.telegram_chat_id,
                 message,
             )
-        except Exception as telegram_error:
-            if selected:
-                with SessionLocal() as session:
-                    alerts = [session.get(Alert, c.alert.id) for c in selected]
-                    valid_alerts = [a for a in alerts if a is not None]
-                    mark_alerts_failed(valid_alerts, str(telegram_error))
-                    session.commit()
-            raise
 
-        if selected:
-            with SessionLocal() as session:
-                alerts = [session.get(Alert, c.alert.id) for c in selected]
-                valid_alerts = [a for a in alerts if a is not None]
-                mark_alerts_sent(valid_alerts)
-                session.commit()
+        offers_count = len(_offer_items(saved_products))
 
-        print(f"Proceso completado. Productos procesados: {len(scraped)}")
+        print(
+            "Proceso completado. "
+            f"Productos procesados: {len(scraped)}. "
+            f"Ofertas con descuento informado: {offers_count}. "
+            f"Mensajes Telegram: {len(messages)}"
+        )
         return 0
 
     except Exception as exc:
@@ -196,19 +212,24 @@ def run() -> int:
             try:
                 with SessionLocal() as session:
                     scrape_run = session.get(ScrapeRun, scrape_run_id)
+
                     if scrape_run is not None and scrape_run.status == "running":
                         finish_scrape_run(
                             scrape_run,
                             status="failed",
                             error_message=str(exc)[:2000],
                         )
+
                         store = session.get(Store, scrape_run.store_id)
                         if store is not None:
                             store.last_error_at = scrape_run.finished_at
+
                         session.commit()
+
             except Exception as tracking_error:
                 print(
-                    f"No se pudo registrar el error de ejecución: {tracking_error}",
+                    "No se pudo registrar el error de ejecución: "
+                    f"{tracking_error}",
                     file=sys.stderr,
                 )
 
