@@ -6,7 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Alert, PriceObservation, Product, ScrapeRun, Store
+from app.matching import normalize_product_name
+from app.models import (
+    Alert,
+    MasterProduct,
+    PriceObservation,
+    Product,
+    ProductMatch,
+    ScrapeRun,
+    Store,
+)
 from app.scrapers.licor3b import ScrapedProduct
 
 
@@ -25,7 +34,7 @@ def get_or_create_store(session: Session) -> Store:
         base_url="https://licor3b.cl/",
         connector_key="licor3b",
         is_active=True,
-        requires_browser=False,
+        requires_browser=True,
         country_code="CL",
         currency_code="CLP",
     )
@@ -66,6 +75,53 @@ def finish_scrape_run(
     scrape_run.error_message = error_message
 
 
+def _get_or_create_master_product(session: Session, source_name: str) -> MasterProduct:
+    normalized = normalize_product_name(source_name)
+    master = session.scalar(
+        select(MasterProduct).where(
+            MasterProduct.normalized_key == normalized.normalized_key
+        )
+    )
+    if master is not None:
+        return master
+
+    master = MasterProduct(
+        canonical_name=normalized.canonical_name,
+        normalized_key=normalized.normalized_key,
+        volume_ml=normalized.volume_ml,
+        status="active",
+    )
+    session.add(master)
+    session.flush()
+    return master
+
+
+def _link_master_product(
+    session: Session,
+    product: Product,
+    master: MasterProduct,
+) -> None:
+    product.master_product_id = master.id
+
+    existing_match = session.scalar(
+        select(ProductMatch).where(ProductMatch.store_product_id == product.id)
+    )
+    if existing_match is None:
+        session.add(
+            ProductMatch(
+                store_product_id=product.id,
+                master_product_id=master.id,
+                confidence=1.0,
+                matching_method="exact_normalized",
+                review_status="automatic",
+            )
+        )
+    else:
+        existing_match.master_product_id = master.id
+        existing_match.confidence = 1.0
+        existing_match.matching_method = "exact_normalized"
+
+
 def save_product(
     session: Session,
     item: ScrapedProduct,
@@ -102,6 +158,9 @@ def save_product(
         existing.regular_price = item.regular_price
         existing.discount_pct = item.discount_pct
         existing.last_seen_at = utcnow()
+
+    master = _get_or_create_master_product(session, item.name)
+    _link_master_product(session, existing, master)
 
     session.add(
         PriceObservation(

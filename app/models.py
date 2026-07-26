@@ -44,17 +44,45 @@ class Store(Base):
     scrape_runs: Mapped[list[ScrapeRun]] = relationship(back_populates="store")
 
 
+class MasterProduct(Base):
+    __tablename__ = "master_products"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    canonical_name: Mapped[str] = mapped_column(String(500))
+    normalized_key: Mapped[str] = mapped_column(String(500), unique=True, index=True)
+    brand: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    subcategory: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    volume_ml: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    ean: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    store_products: Mapped[list[Product]] = relationship(back_populates="master_product")
+    matches: Mapped[list[ProductMatch]] = relationship(
+        back_populates="master_product",
+        cascade="all, delete-orphan",
+    )
+
+
 class Product(Base):
+    """Publicación concreta de una tienda; equivale a store_products en el diseño."""
+
     __tablename__ = "products"
     __table_args__ = (
         UniqueConstraint("store", "url", name="uq_product_store_url"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Compatibilidad temporal con la versión anterior.
     store: Mapped[str] = mapped_column(String(80), index=True)
     store_id: Mapped[int | None] = mapped_column(
         ForeignKey("stores.id"), nullable=True, index=True
+    )
+    master_product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("master_products.id"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(500))
     url: Mapped[str] = mapped_column(String(1000))
@@ -69,11 +97,43 @@ class Product(Base):
     )
 
     store_record: Mapped[Store | None] = relationship(back_populates="products")
+    master_product: Mapped[MasterProduct | None] = relationship(
+        back_populates="store_products"
+    )
     observations: Mapped[list[PriceObservation]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
     )
     alerts: Mapped[list[Alert]] = relationship(back_populates="product")
+    matches: Mapped[list[ProductMatch]] = relationship(
+        back_populates="store_product",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProductMatch(Base):
+    __tablename__ = "product_matches"
+    __table_args__ = (
+        UniqueConstraint("store_product_id", name="uq_product_matches_store_product"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id"), index=True
+    )
+    master_product_id: Mapped[int] = mapped_column(
+        ForeignKey("master_products.id"), index=True
+    )
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    matching_method: Mapped[str] = mapped_column(String(50), default="exact_normalized")
+    review_status: Mapped[str] = mapped_column(String(30), default="automatic", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    store_product: Mapped[Product] = relationship(back_populates="matches")
+    master_product: Mapped[MasterProduct] = relationship(back_populates="matches")
 
 
 class ScrapeRun(Base):
@@ -100,6 +160,8 @@ class ScrapeRun(Base):
 
 
 class PriceObservation(Base):
+    """Historial inmutable de precios; equivale a price_history en el diseño."""
+
     __tablename__ = "price_observations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
