@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.domain import CollectedProduct, SavedProduct
@@ -55,7 +55,7 @@ def save_product(
 ) -> SavedProduct:
     product = session.scalar(select(Product).where(Product.store == item.store, Product.url == item.url))
     is_new = product is None
-    price_dropped = False
+    previous_price = None if product is None else product.current_price
 
     if product is None:
         product = Product(
@@ -66,7 +66,6 @@ def save_product(
         session.add(product)
         session.flush()
     else:
-        price_dropped = item.current_price < product.current_price
         product.store_id = store.id
         product.name = item.name
         product.current_price = item.current_price
@@ -80,4 +79,22 @@ def save_product(
         product=product, scrape_run_id=scrape_run.id, price=item.current_price,
         regular_price=item.regular_price, discount_pct=item.discount_pct,
     ))
-    return SavedProduct(item=item, product=product, is_new=is_new, price_dropped=price_dropped)
+    return SavedProduct(
+        item=item,
+        product=product,
+        is_new=is_new,
+        previous_price=previous_price,
+    )
+
+
+def count_missing_products(session: Session, store: Store, scrape_run: ScrapeRun) -> int:
+    """Productos conocidos que no fueron observados durante la ejecución actual."""
+    observed_ids = select(PriceObservation.product_id).where(
+        PriceObservation.scrape_run_id == scrape_run.id
+    )
+    return int(session.scalar(
+        select(func.count(Product.id)).where(
+            Product.store_id == store.id,
+            Product.id.not_in(observed_ids),
+        )
+    ) or 0)

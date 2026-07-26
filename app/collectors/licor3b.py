@@ -5,7 +5,7 @@ from urllib.parse import urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 
-from app.domain import CollectedProduct
+from app.domain import CollectedProduct, CollectionBatch, CollectionStats
 from playwright.sync_api import (
     Browser,
     BrowserContext,
@@ -279,7 +279,7 @@ def _open_with_captcha_retries(
     return page, last_html, last_status
 
 
-def _collect_products() -> list[CollectedProduct]:
+def _collect_products() -> CollectionBatch:
     all_products: dict[str, CollectedProduct] = {}
     pages_visited = 0
     cards_seen = 0
@@ -377,9 +377,17 @@ def _collect_products() -> list[CollectedProduct]:
                 flush=True,
             )
 
-            return sorted(
+            products = sorted(
                 all_products.values(),
                 key=lambda product: product.name.casefold(),
+            )
+            return CollectionBatch(
+                products=products,
+                stats=CollectionStats(
+                    pages_visited=pages_visited,
+                    cards_seen=cards_seen,
+                    unique_products=len(products),
+                ),
             )
         finally:
             try:
@@ -393,10 +401,10 @@ class Licor3BCollector:
     key = "licor3b"
     store_name = "Licor3B"
 
-    def collect(self) -> list[CollectedProduct]:
+    def collect(self) -> CollectionBatch:
         return _collect_products()
 
 
 def scrape() -> list[CollectedProduct]:
     """Compatibilidad temporal con la arquitectura v1."""
-    return Licor3BCollector().collect()
+    return Licor3BCollector().collect().products

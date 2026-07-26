@@ -1,3 +1,8 @@
-from app.domain.products import CollectedProduct, SavedProduct
+from app.domain.products import (
+    CollectedProduct,
+    CollectionBatch,
+    CollectionStats,
+    SavedProduct,
+)
 
-__all__ = ["CollectedProduct", "SavedProduct"]
+__all__ = ["CollectedProduct", "CollectionBatch", "CollectionStats", "SavedProduct"]

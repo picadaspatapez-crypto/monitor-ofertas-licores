@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from app.models import Product
@@ -17,8 +17,45 @@ class CollectedProduct:
 
 
 @dataclass(frozen=True)
+class CollectionStats:
+    pages_visited: int = 0
+    cards_seen: int = 0
+    unique_products: int = 0
+
+
+@dataclass(frozen=True)
+class CollectionBatch:
+    products: list[CollectedProduct]
+    stats: CollectionStats = field(default_factory=CollectionStats)
+
+
+@dataclass(frozen=True)
 class SavedProduct:
     item: CollectedProduct
     product: Product
     is_new: bool
-    price_dropped: bool
+    previous_price: Optional[int]
+
+    @property
+    def price_dropped(self) -> bool:
+        return self.previous_price is not None and self.item.current_price < self.previous_price
+
+    @property
+    def price_increased(self) -> bool:
+        return self.previous_price is not None and self.item.current_price > self.previous_price
+
+    @property
+    def price_changed(self) -> bool:
+        return self.price_dropped or self.price_increased
+
+    @property
+    def price_change_amount(self) -> int:
+        if self.previous_price is None:
+            return 0
+        return self.item.current_price - self.previous_price
+
+    @property
+    def price_change_pct(self) -> float:
+        if not self.previous_price:
+            return 0.0
+        return self.price_change_amount / self.previous_price
