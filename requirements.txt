@@ -1,5 +1,7 @@
 alembic==1.14.0
 beautifulsoup4==4.12.3
+playwright==1.49.1
 psycopg[binary]==3.2.1
+pytest==8.3.4
 requests==2.32.3
 SQLAlchemy==2.0.36

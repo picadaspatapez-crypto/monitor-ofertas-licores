@@ -7,13 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir playwright \
     && python -m playwright install --with-deps chromium
 
 COPY . .
-
 RUN chmod +x /app/entrypoint.sh
 
 CMD ["/app/entrypoint.sh"]

@@ -1,5 +1,5 @@
-from app.runner import run
+from app.pipeline import run_pipeline
 
 
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(run_pipeline())
