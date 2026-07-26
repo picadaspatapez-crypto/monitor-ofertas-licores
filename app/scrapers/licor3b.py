@@ -2,7 +2,7 @@ import re
 import sys
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import (
@@ -18,7 +18,7 @@ BASE_URL = "https://licor3b.cl"
 OFFERS_URL = f"{BASE_URL}/product-category/ofertas/"
 NAVIGATION_TIMEOUT_MS = 60_000
 PAGE_SETTLE_MS = 4_000
-MAX_PAGES = 30
+MAX_PAGES = 50
 MAX_SCROLL_ROUNDS = 12
 
 
@@ -44,6 +44,38 @@ def _clean_url(raw_url: str) -> str:
             path,
             "",
             "",
+            "",
+        )
+    )
+
+
+def _normalize_page_url(raw_url: str) -> str:
+    absolute = urljoin(BASE_URL, raw_url.strip())
+    parsed = urlparse(absolute)
+
+    if parsed.netloc.lower() != urlparse(BASE_URL).netloc.lower():
+        return ""
+
+    path = parsed.path.rstrip("/") + "/"
+    query_items = parse_qsl(parsed.query, keep_blank_values=True)
+
+    # Evita URLs híbridas como /page/3/?product-page=4.
+    if re.search(r"/page/\d+/$", path):
+        query_items = [
+            (key, value)
+            for key, value in query_items
+            if key.lower() not in {"product-page", "product_page", "paged"}
+        ]
+
+    query = urlencode(query_items)
+
+    return urlunparse(
+        (
+            parsed.scheme or "https",
+            parsed.netloc.lower(),
+            path,
+            "",
+            query,
             "",
         )
     )
@@ -183,40 +215,6 @@ def _parse_html(html: str) -> tuple[dict[str, ScrapedProduct], int]:
         if product is not None:
             products[product.url] = product
 
-    if not products:
-        for link in soup.select("a[href]"):
-            href = str(link.get("href") or "").strip()
-            if not href:
-                continue
-
-            url = _clean_url(href)
-            text = link.get_text(" ", strip=True)
-
-            if not _valid_product_url(url) or "$" not in text:
-                continue
-
-            prices = _all_prices(text)
-            name = _clean_name(text)
-
-            if not prices or len(name) < 4:
-                continue
-
-            current = prices[-1]
-            regular = (
-                prices[-2]
-                if len(prices) >= 2 and prices[-2] > current
-                else None
-            )
-
-            products[url] = ScrapedProduct(
-                store="Licor3B",
-                name=name,
-                url=url,
-                current_price=current,
-                regular_price=regular,
-                discount_pct=_discount(regular, current),
-            )
-
     return products, len(cards)
 
 
@@ -245,8 +243,7 @@ def _wait_for_real_page(page: Page) -> None:
     page.wait_for_timeout(PAGE_SETTLE_MS)
 
     for _ in range(5):
-        html = page.content()
-        if len(html) > 5_000:
+        if len(page.content()) > 5_000:
             return
         page.wait_for_timeout(3_000)
 
@@ -257,10 +254,8 @@ def _scroll_until_stable(page: Page) -> None:
 
     for _ in range(MAX_SCROLL_ROUNDS):
         current_height = page.evaluate("document.body.scrollHeight")
-
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(1_200)
-
         new_height = page.evaluate("document.body.scrollHeight")
 
         if new_height == current_height == previous_height:
@@ -274,66 +269,38 @@ def _scroll_until_stable(page: Page) -> None:
             break
 
 
-def _normalize_page_url(raw_url: str) -> str:
-    absolute = urljoin(BASE_URL, raw_url)
-    parsed = urlparse(absolute)
-
-    if parsed.netloc.lower() != urlparse(BASE_URL).netloc.lower():
-        return ""
-
-    return urlunparse(
-        (
-            parsed.scheme or "https",
-            parsed.netloc.lower(),
-            parsed.path.rstrip("/") + "/",
-            "",
-            parsed.query,
-            "",
-        )
-    )
-
-
-def _discover_pagination_urls(html: str, current_url: str) -> list[str]:
+def _next_page_url(html: str, current_url: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
-    candidates: list[str] = []
 
     selectors = (
+        "link[rel='next'][href]",
         "a.next.page-numbers[href]",
         "a.next[href]",
-        "link[rel='next'][href]",
-        ".woocommerce-pagination a[href]",
-        "nav.pagination a[href]",
-        "a.page-numbers[href]",
+        ".woocommerce-pagination a.next[href]",
+        "nav.pagination a.next[href]",
     )
 
     for selector in selectors:
-        for node in soup.select(selector):
-            href = str(node.get("href") or "").strip()
-            if not href:
-                continue
+        node = soup.select_one(selector)
+        if node is None:
+            continue
 
-            normalized = _normalize_page_url(href)
-            if not normalized or normalized == current_url:
-                continue
+        href = str(node.get("href") or "").strip()
+        if not href:
+            continue
 
-            lowered = normalized.lower()
-            if (
-                "/product-category/ofertas/" not in lowered
-                and "/categoria-producto/ofertas/" not in lowered
-            ):
-                continue
+        normalized = _normalize_page_url(href)
+        if not normalized or normalized == current_url:
+            continue
 
-            candidates.append(normalized)
+        lowered = normalized.lower()
+        if (
+            "/product-category/ofertas/" in lowered
+            or "/categoria-producto/ofertas/" in lowered
+        ):
+            return normalized
 
-    unique: list[str] = []
-    seen: set[str] = set()
-
-    for url in candidates:
-        if url not in seen:
-            seen.add(url)
-            unique.append(url)
-
-    return unique
+    return ""
 
 
 def _diagnose_failure(
@@ -362,7 +329,7 @@ def _diagnose_failure(
 def scrape() -> list[ScrapedProduct]:
     all_products: dict[str, ScrapedProduct] = {}
     visited: set[str] = set()
-    pending: list[str] = [_normalize_page_url(OFFERS_URL)]
+    current_url = _normalize_page_url(OFFERS_URL)
 
     pages_visited = 0
     cards_seen = 0
@@ -381,16 +348,18 @@ def scrape() -> list[ScrapedProduct]:
             context = _create_context(browser)
             page = context.new_page()
 
-            while pending and pages_visited < MAX_PAGES:
-                requested_url = pending.pop(0)
+            while current_url and pages_visited < MAX_PAGES:
+                if current_url in visited:
+                    print(
+                        f"Licor3B: se detuvo por URL repetida: {current_url}",
+                        flush=True,
+                    )
+                    break
 
-                if not requested_url or requested_url in visited:
-                    continue
-
-                visited.add(requested_url)
+                visited.add(current_url)
 
                 response = page.goto(
-                    requested_url,
+                    current_url,
                     wait_until="domcontentloaded",
                     timeout=NAVIGATION_TIMEOUT_MS,
                 )
@@ -403,25 +372,38 @@ def scrape() -> list[ScrapedProduct]:
 
                 pages_visited += 1
                 cards_seen += page_cards
+
+                before = len(all_products)
                 all_products.update(page_products)
+                new_unique = len(all_products) - before
 
                 status = response.status if response is not None else None
+                final_page_url = _normalize_page_url(page.url)
+
                 print(
                     "Licor3B página "
                     f"{pages_visited}: HTTP={status}, "
                     f"tarjetas={page_cards}, "
                     f"productos_página={len(page_products)}, "
+                    f"nuevos_únicos={new_unique}, "
                     f"productos_únicos={len(all_products)}, "
-                    f"url={page.url}",
+                    f"url={final_page_url}",
                     flush=True,
                 )
 
-                for discovered_url in _discover_pagination_urls(
-                    last_html,
-                    _normalize_page_url(page.url),
-                ):
-                    if discovered_url not in visited and discovered_url not in pending:
-                        pending.append(discovered_url)
+                next_url = _next_page_url(last_html, final_page_url)
+
+                # Protección contra paginación defectuosa:
+                # si una página no aporta nada nuevo, no seguimos indefinidamente.
+                if pages_visited > 1 and new_unique == 0:
+                    print(
+                        "Licor3B: página sin productos nuevos; "
+                        "se detiene la paginación.",
+                        flush=True,
+                    )
+                    break
+
+                current_url = next_url
 
             if not all_products:
                 _diagnose_failure(
