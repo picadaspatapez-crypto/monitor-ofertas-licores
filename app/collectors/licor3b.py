@@ -1,5 +1,6 @@
 import re
 import sys
+from typing import Optional
 from urllib.parse import urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
