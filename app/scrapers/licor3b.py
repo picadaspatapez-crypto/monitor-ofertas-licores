@@ -17,7 +17,9 @@ from playwright.sync_api import (
 BASE_URL = "https://licor3b.cl"
 OFFERS_URL = f"{BASE_URL}/product-category/ofertas/"
 NAVIGATION_TIMEOUT_MS = 60_000
-RENDER_WAIT_MS = 8_000
+PAGE_SETTLE_MS = 4_000
+MAX_PAGES = 30
+MAX_SCROLL_ROUNDS = 12
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ def _clean_url(raw_url: str) -> str:
     absolute = urljoin(BASE_URL, raw_url.strip())
     parsed = urlparse(absolute)
     path = parsed.path.rstrip("/") + "/"
+
     return urlunparse(
         (
             parsed.scheme or "https",
@@ -58,6 +61,7 @@ def _valid_product_url(url: str) -> bool:
         "/categoria-producto/",
         "add-to-cart=",
     )
+
     if any(value in lowered for value in excluded):
         return False
 
@@ -145,6 +149,7 @@ def _parse_card(card: Tag) -> Optional[ScrapedProduct]:
         ".product-title, "
         ".name, h2, h3, h4"
     )
+
     name = _clean_name(
         title_node.get_text(" ", strip=True)
         if title_node is not None
@@ -178,7 +183,6 @@ def _parse_html(html: str) -> tuple[dict[str, ScrapedProduct], int]:
         if product is not None:
             products[product.url] = product
 
-    # Respaldo para diseños donde el enlace contiene nombre y precio.
     if not products:
         for link in soup.select("a[href]"):
             href = str(link.get("href") or "").strip()
@@ -187,11 +191,13 @@ def _parse_html(html: str) -> tuple[dict[str, ScrapedProduct], int]:
 
             url = _clean_url(href)
             text = link.get_text(" ", strip=True)
+
             if not _valid_product_url(url) or "$" not in text:
                 continue
 
             prices = _all_prices(text)
             name = _clean_name(text)
+
             if not prices or len(name) < 4:
                 continue
 
@@ -201,6 +207,7 @@ def _parse_html(html: str) -> tuple[dict[str, ScrapedProduct], int]:
                 if len(prices) >= 2 and prices[-2] > current
                 else None
             )
+
             products[url] = ScrapedProduct(
                 store="Licor3B",
                 name=name,
@@ -229,39 +236,137 @@ def _create_context(browser: Browser) -> BrowserContext:
     )
 
 
-def _load_page(page: Page) -> tuple[str, Optional[int]]:
-    response = page.goto(
-        OFFERS_URL,
-        wait_until="domcontentloaded",
-        timeout=NAVIGATION_TIMEOUT_MS,
-    )
-
-    status = response.status if response is not None else None
-
-    # La respuesta HTTP 202 usa una página intermedia con meta refresh.
-    # Chromium procesa esa navegación; esperamos a que se estabilice.
+def _wait_for_real_page(page: Page) -> None:
     try:
-        page.wait_for_load_state(
-            "networkidle",
-            timeout=20_000,
-        )
+        page.wait_for_load_state("networkidle", timeout=20_000)
     except PlaywrightTimeoutError:
         pass
 
-    page.wait_for_timeout(RENDER_WAIT_MS)
+    page.wait_for_timeout(PAGE_SETTLE_MS)
 
-    # Damos tiempo adicional si aún estamos en la página mínima de verificación.
-    for _ in range(4):
+    for _ in range(5):
         html = page.content()
         if len(html) > 5_000:
-            return html, status
+            return
         page.wait_for_timeout(3_000)
 
-    return page.content(), status
+
+def _scroll_until_stable(page: Page) -> None:
+    previous_height = 0
+    stable_rounds = 0
+
+    for _ in range(MAX_SCROLL_ROUNDS):
+        current_height = page.evaluate("document.body.scrollHeight")
+
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(1_200)
+
+        new_height = page.evaluate("document.body.scrollHeight")
+
+        if new_height == current_height == previous_height:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
+
+        previous_height = new_height
+
+        if stable_rounds >= 2:
+            break
+
+
+def _normalize_page_url(raw_url: str) -> str:
+    absolute = urljoin(BASE_URL, raw_url)
+    parsed = urlparse(absolute)
+
+    if parsed.netloc.lower() != urlparse(BASE_URL).netloc.lower():
+        return ""
+
+    return urlunparse(
+        (
+            parsed.scheme or "https",
+            parsed.netloc.lower(),
+            parsed.path.rstrip("/") + "/",
+            "",
+            parsed.query,
+            "",
+        )
+    )
+
+
+def _discover_pagination_urls(html: str, current_url: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: list[str] = []
+
+    selectors = (
+        "a.next.page-numbers[href]",
+        "a.next[href]",
+        "link[rel='next'][href]",
+        ".woocommerce-pagination a[href]",
+        "nav.pagination a[href]",
+        "a.page-numbers[href]",
+    )
+
+    for selector in selectors:
+        for node in soup.select(selector):
+            href = str(node.get("href") or "").strip()
+            if not href:
+                continue
+
+            normalized = _normalize_page_url(href)
+            if not normalized or normalized == current_url:
+                continue
+
+            lowered = normalized.lower()
+            if (
+                "/product-category/ofertas/" not in lowered
+                and "/categoria-producto/ofertas/" not in lowered
+            ):
+                continue
+
+            candidates.append(normalized)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+
+    for url in candidates:
+        if url not in seen:
+            seen.add(url)
+            unique.append(url)
+
+    return unique
+
+
+def _diagnose_failure(
+    *,
+    page: Page,
+    html: str,
+    pages_visited: int,
+    cards_seen: int,
+) -> None:
+    preview = " ".join(
+        BeautifulSoup(html[:5_000], "html.parser")
+        .get_text(" ", strip=True)
+        .split()
+    )
+
+    print("=== DIAGNÓSTICO PLAYWRIGHT LICOR3B ===", file=sys.stderr)
+    print(f"final_url={page.url}", file=sys.stderr)
+    print(f"title={page.title()!r}", file=sys.stderr)
+    print(f"html_chars={len(html)}", file=sys.stderr)
+    print(f"pages_visited={pages_visited}", file=sys.stderr)
+    print(f"cards_seen={cards_seen}", file=sys.stderr)
+    print(f"html_preview={preview[:1_500]}", file=sys.stderr)
+    print("=== FIN DIAGNÓSTICO ===", file=sys.stderr)
 
 
 def scrape() -> list[ScrapedProduct]:
-    diagnostics: list[str] = []
+    all_products: dict[str, ScrapedProduct] = {}
+    visited: set[str] = set()
+    pending: list[str] = [_normalize_page_url(OFFERS_URL)]
+
+    pages_visited = 0
+    cards_seen = 0
+    last_html = ""
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -276,43 +381,70 @@ def scrape() -> list[ScrapedProduct]:
             context = _create_context(browser)
             page = context.new_page()
 
-            html, initial_status = _load_page(page)
-            final_url = page.url
-            title = page.title()
+            while pending and pages_visited < MAX_PAGES:
+                requested_url = pending.pop(0)
 
-            products, card_count = _parse_html(html)
+                if not requested_url or requested_url in visited:
+                    continue
 
-            diagnostics.extend(
-                [
-                    f"initial_http={initial_status}",
-                    f"final_url={final_url}",
-                    f"title={title!r}",
-                    f"html_chars={len(html)}",
-                    f"cards={card_count}",
-                    f"products={len(products)}",
-                ]
-            )
+                visited.add(requested_url)
 
-            if not products:
-                preview = " ".join(
-                    BeautifulSoup(html[:5_000], "html.parser")
-                    .get_text(" ", strip=True)
-                    .split()
+                response = page.goto(
+                    requested_url,
+                    wait_until="domcontentloaded",
+                    timeout=NAVIGATION_TIMEOUT_MS,
                 )
 
-                print("=== DIAGNÓSTICO PLAYWRIGHT LICOR3B ===", file=sys.stderr)
-                for diagnostic in diagnostics:
-                    print(diagnostic, file=sys.stderr)
-                print(f"html_preview={preview[:1_500]}", file=sys.stderr)
-                print("=== FIN DIAGNÓSTICO ===", file=sys.stderr)
+                _wait_for_real_page(page)
+                _scroll_until_stable(page)
 
+                last_html = page.content()
+                page_products, page_cards = _parse_html(last_html)
+
+                pages_visited += 1
+                cards_seen += page_cards
+                all_products.update(page_products)
+
+                status = response.status if response is not None else None
+                print(
+                    "Licor3B página "
+                    f"{pages_visited}: HTTP={status}, "
+                    f"tarjetas={page_cards}, "
+                    f"productos_página={len(page_products)}, "
+                    f"productos_únicos={len(all_products)}, "
+                    f"url={page.url}",
+                    flush=True,
+                )
+
+                for discovered_url in _discover_pagination_urls(
+                    last_html,
+                    _normalize_page_url(page.url),
+                ):
+                    if discovered_url not in visited and discovered_url not in pending:
+                        pending.append(discovered_url)
+
+            if not all_products:
+                _diagnose_failure(
+                    page=page,
+                    html=last_html,
+                    pages_visited=pages_visited,
+                    cards_seen=cards_seen,
+                )
                 raise RuntimeError(
                     "Playwright abrió Licor3B, pero no encontró productos. "
                     "Revisa el bloque DIAGNÓSTICO PLAYWRIGHT LICOR3B."
                 )
 
+            print(
+                "Resumen Licor3B: "
+                f"páginas={pages_visited}, "
+                f"tarjetas={cards_seen}, "
+                f"productos_únicos={len(all_products)}",
+                flush=True,
+            )
+
             return sorted(
-                products.values(),
+                all_products.values(),
                 key=lambda product: product.name.casefold(),
             )
         finally:
