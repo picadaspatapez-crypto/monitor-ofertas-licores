@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from app.config import Settings
 from app.database import Base, create_database
-from app.models import Alert, Product, ScrapeRun
+from app.models import Alert, Product, ScrapeRun, Store
 from app.repository import (
     finish_scrape_run,
     get_or_create_store,
@@ -194,8 +194,6 @@ def run() -> int:
     except Exception as exc:
         if SessionLocal is not None and scrape_run_id is not None:
             try:
-                from app.models import ScrapeRun, Store
-
                 with SessionLocal() as session:
                     scrape_run = session.get(ScrapeRun, scrape_run_id)
                     if scrape_run is not None and scrape_run.status == "running":
