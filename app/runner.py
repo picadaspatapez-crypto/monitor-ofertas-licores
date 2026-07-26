@@ -31,32 +31,40 @@ def clp(value: int) -> str:
 
 
 def _status_label(saved: SavedProduct) -> str:
-    if saved.is_new:
-        return "🆕 Nuevo"
     if saved.price_dropped:
         return "📉 Bajó de precio"
+    if saved.is_new:
+        return "🆕 Nuevo"
     return "Sin cambio"
+
+
+def _reported_discount(saved: SavedProduct) -> bool:
+    return (
+        saved.item.regular_price is not None
+        and saved.item.regular_price > saved.item.current_price
+        and saved.item.discount_pct > 0
+    )
 
 
 def _ranked_items(items: list[SavedProduct]) -> list[SavedProduct]:
     """
-    Prioridad:
-    1. Descuento informado disponible.
-    2. Productos que bajaron de precio.
+    Orden de prioridad:
+    1. Mayor descuento informado por la tienda.
+    2. Productos que bajaron frente a la observación anterior.
     3. Productos nuevos.
-    4. Menor precio actual.
+    4. Nombre alfabético.
+
+    El precio actual no se utiliza como criterio de orden.
     """
     return sorted(
         items,
         key=lambda saved: (
-            saved.item.regular_price is not None
-            and saved.item.discount_pct > 0,
-            saved.item.discount_pct,
-            saved.price_dropped,
-            saved.is_new,
-            -saved.item.current_price,
+            0 if _reported_discount(saved) else 1,
+            -saved.item.discount_pct if _reported_discount(saved) else 0,
+            0 if saved.price_dropped else 1,
+            0 if saved.is_new else 1,
+            saved.item.name.casefold(),
         ),
-        reverse=True,
     )
 
 
@@ -65,23 +73,28 @@ def build_messages(
     total_products: int,
 ) -> list[str]:
     selected = _ranked_items(saved_products)[:REPORT_LIMIT]
-    with_reported_discount = sum(
-        1
-        for saved in saved_products
-        if saved.item.regular_price is not None
-        and saved.item.discount_pct > 0
+
+    reported_discount_count = sum(
+        1 for saved in saved_products if _reported_discount(saved)
+    )
+    dropped_count = sum(
+        1 for saved in saved_products if saved.price_dropped
+    )
+    new_count = sum(
+        1 for saved in saved_products if saved.is_new
     )
 
     summary = [
         "📊 Monitor Licor3B actualizado",
         "",
         f"Productos revisados: {total_products}",
-        f"Con descuento informado: {with_reported_discount}",
+        f"Con descuento informado: {reported_discount_count}",
+        f"Bajaron de precio: {dropped_count}",
+        f"Productos nuevos: {new_count}",
         f"Productos mostrados: {len(selected)}",
         "",
-        "ℹ️ Todos pertenecen a la categoría Ofertas de Licor3B.",
-        "El descuento informado solo aparece cuando la tienda publica",
-        "precio normal y precio actual.",
+        "ℹ️ Orden: descuento informado, bajas reales, nuevos y alfabético.",
+        "El precio no se usa para seleccionar los productos mostrados.",
     ]
 
     if not selected:
@@ -99,7 +112,7 @@ def build_messages(
     for start in range(0, len(selected), ITEMS_PER_MESSAGE):
         group = selected[start : start + ITEMS_PER_MESSAGE]
         lines = [
-            f"🏷️ Productos en oferta {start + 1}-{start + len(group)}",
+            f"🏷️ Productos destacados {start + 1}-{start + len(group)}",
             "",
         ]
 
@@ -113,7 +126,7 @@ def build_messages(
                 ]
             )
 
-            if item.regular_price is not None and item.discount_pct > 0:
+            if _reported_discount(saved):
                 saving = item.regular_price - item.current_price
                 lines.extend(
                     [
