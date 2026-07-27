@@ -1,2 +1,2 @@
-__version__ = "4.1.0"
-RELEASE_NAME = "Líquidos Collector"
+__version__ = "4.2.0"
+RELEASE_NAME = "Best Price Ranking"

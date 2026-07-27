@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.2.0 — Best Price Ranking
+
+- Reemplaza el catálogo alfabético por un ranking de oportunidades de precio.
+- Prioriza la mayor señal porcentual entre baja histórica real y descuento informado.
+- Usa el ahorro absoluto y el precio actual solo como criterios de desempate.
+- Elimina `MAX_PRODUCT_PRICE` del código: no existe techo de precio.
+- Aumenta de 20 a 30 los productos destacados por tienda.
+- Divide los 30 productos en tres mensajes de diez.
+- Sin migraciones ni variables nuevas obligatorias.
+
 ## v4.1.0 — Líquidos Collector
 
 - Segundo collector activo: Líquidos.cl.

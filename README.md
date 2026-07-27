@@ -1,4 +1,4 @@
-# Monitor de Ofertas de Licores — v4.1.0
+# Monitor de Ofertas de Licores — v4.2.0
 
 Plataforma multi-tienda para recolectar catálogos, guardar historial de precios
 en PostgreSQL y enviar reportes por Telegram.
@@ -8,20 +8,34 @@ en PostgreSQL y enviar reportes por Telegram.
 - Licor3B
 - Líquidos.cl
 
+## Cambio principal de v4.2
+
+Telegram deja de mostrar un catálogo alfabético y presenta hasta **30 productos
+ordenados por oportunidad de precio** en cada tienda.
+
+El ranking considera:
+
+1. La mayor baja real frente a la observación anterior.
+2. El mayor descuento informado por la tienda.
+3. El mayor ahorro absoluto en pesos.
+4. El precio actual solamente como desempate final.
+
+No se usa `MAX_PRODUCT_PRICE` ni ningún otro techo de precio. Un producto caro
+puede aparecer si su baja o descuento lo justifica.
+
 ## Flujo actual
 
 ```text
-Collectors → PostgreSQL → análisis histórico → Telegram
+Collectors → PostgreSQL → análisis histórico → ranking de precios → Telegram
 ```
-
-La v4.1 incorpora el primer collector adicional sin modificar el pipeline. Cada
-tienda conserva su propio historial, ejecuciones y estado de salud.
 
 ## Despliegue
 
-Consulta `DEPLOY_V4.1.md`. No se agregan variables ni migraciones.
+Consulta `DEPLOY_V4.2.md`. No se agregan migraciones ni variables obligatorias.
+La variable antigua `MAX_PRODUCT_PRICE` puede permanecer en Railway, pero esta
+versión la ignora completamente.
 
 ## Próxima versión
 
-**v4.2:** diagnóstico y endurecimiento del collector de Líquidos usando los
-primeros logs reales de Railway; luego comenzará el matching entre tiendas.
+**v4.3:** periodicidad recomendada, resúmenes más breves y control de alertas
+repetidas.

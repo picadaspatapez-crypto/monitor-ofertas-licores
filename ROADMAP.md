@@ -167,4 +167,12 @@ información histórica y comparativa.
 
 - v4.0: base multi-tienda desplegada.
 - v4.1: collector de Líquidos incorporado.
-- Próximo: v4.2, endurecimiento con los primeros logs reales del nuevo sitio.
+- v4.2: ranking de mejores precios, sin techo y 30 productos por tienda.
+- Próximo: v4.3, periodicidad y control de alertas repetidas.
+
+
+## Ajuste de roadmap desde v4.2
+
+- **v4.2.0 — Best Price Ranking:** 30 productos por tienda, sin techo de precio.
+- **v4.3:** periodicidad y control de alertas repetidas.
+- El resto del camino técnico continúa en `docs/V4_ROADMAP.md`.
