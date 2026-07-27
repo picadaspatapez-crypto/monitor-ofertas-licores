@@ -182,7 +182,7 @@ class SearchApplication:
 
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/4.6"
+    server_version = "LiquorSearch/4.7"
 
     @property
     def app(self) -> SearchApplication:
@@ -244,8 +244,9 @@ class SearchHandler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "version": APP_VERSION,
                     "release": RELEASE_NAME,
-                    "service": "search",
+                    "service": "search-and-telegram",
                     "auth_configured": bool(self.app.access_token),
+                    "telegram_token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip()),
                 }
                 self._send(200, json.dumps(payload).encode(), content_type="application/json")
             except Exception as exc:

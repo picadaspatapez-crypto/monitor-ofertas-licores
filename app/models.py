@@ -226,3 +226,15 @@ class Alert(Base):
     product: Mapped[Product | None] = relationship(back_populates="alerts")
     store: Mapped[Store | None] = relationship(back_populates="alerts")
     scrape_run: Mapped[ScrapeRun | None] = relationship(back_populates="alerts")
+
+
+class TelegramBotState(Base):
+    """Small persistent key/value store for Telegram polling offsets."""
+
+    __tablename__ = "telegram_bot_state"
+
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
