@@ -21,6 +21,7 @@ class CollectionStats:
     pages_visited: int = 0
     cards_seen: int = 0
     unique_products: int = 0
+    sections_visited: int = 0
 
 
 @dataclass(frozen=True)

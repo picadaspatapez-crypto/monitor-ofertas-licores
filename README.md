@@ -22,3 +22,7 @@ pytest -q
 ```
 
 Consulta `docs/V2_ARCHITECTURE.md` y `docs/MIGRATION_V2.md`.
+
+## Cobertura Licor3B
+
+Desde v2.2, Licor3B se recopila por categorías raíz y no solo desde la página de ofertas. Consulta `docs/LICOR3B_FULL_CATALOG.md` para modos de ejecución y diagnóstico.

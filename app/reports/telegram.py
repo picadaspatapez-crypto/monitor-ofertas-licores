@@ -50,6 +50,7 @@ def build_telegram_messages(
         f"📊 Ejecución completada: {store_name}",
         "",
         f"⏱ Duración: {duration_text(analysis.duration_ms)}",
+        f"🗂 Secciones: {stats.sections_visited}",
         f"📄 Páginas: {stats.pages_visited}",
         f"🧾 Tarjetas procesadas: {stats.cards_seen}",
         f"📦 Productos encontrados: {analysis.total}",

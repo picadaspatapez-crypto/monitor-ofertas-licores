@@ -16,10 +16,11 @@ def test_report_builds_observability_summary():
         items,
         missing_products=2,
         duration_ms=125000,
-        collection_stats=CollectionStats(pages_visited=39, cards_seen=548, unique_products=548),
+        collection_stats=CollectionStats(pages_visited=39, cards_seen=548, unique_products=548, sections_visited=11),
     )
     messages = build_telegram_messages(store_name="Licor3B", items=items, analysis=analysis)
     assert "Duración: 2m 05s" in messages[0]
+    assert "Secciones: 11" in messages[0]
     assert "Páginas: 39" in messages[0]
     assert "Bajaron: 1" in messages[0]
     assert "No observados: 2" in messages[0]

@@ -32,6 +32,7 @@ def _print_summary(*, name: str, analysis) -> None:
     print("=" * 54, flush=True)
     print(f"RESUMEN DE EJECUCIÓN · {name}", flush=True)
     print(f"Duración...............: {analysis.duration_ms / 1000:.1f} s", flush=True)
+    print(f"Secciones..............: {stats.sections_visited}", flush=True)
     print(f"Páginas................: {stats.pages_visited}", flush=True)
     print(f"Tarjetas...............: {stats.cards_seen}", flush=True)
     print(f"Productos..............: {analysis.total}", flush=True)
