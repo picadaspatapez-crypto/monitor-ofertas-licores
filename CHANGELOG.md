@@ -1,5 +1,18 @@
 # Changelog
 
+## v4.6.0 — Unified Catalog & Search Engine
+
+- Campos de catálogo para variante, cantidad, alias y texto de búsqueda.
+- Migración defensiva `0005_search_catalog`.
+- Reindexación automática después de cada ejecución del scraper.
+- Motor tolerante a alias, palabras incompletas, errores y volumen.
+- Comparación de precios agrupada por producto maestro.
+- Filtro de frescura de publicaciones.
+- Página web privada protegida por `SEARCH_ACCESS_TOKEN`.
+- Endpoint JSON `/api/search` reutilizable por Telegram en v4.7.
+- CLI de diagnóstico y servicio Railway independiente.
+- Configuración `/railway.search.toml` con healthcheck `/health`.
+
 ## v4.5.0 — Cross-store Matching & Price Comparator
 
 - Normalización explicable de marca, variante, volumen y formato.

@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements-search.txt .
+RUN pip install --no-cache-dir -r requirements-search.txt
+
+COPY . .
+RUN chmod +x /app/search_entrypoint.sh
+
+CMD ["/app/search_entrypoint.sh"]

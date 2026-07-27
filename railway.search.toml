@@ -1,0 +1,8 @@
+[build]
+dockerfilePath = "Dockerfile.search"
+
+[deploy]
+startCommand = "/app/search_entrypoint.sh"
+restartPolicyType = "ALWAYS"
+healthcheckPath = "/health"
+healthcheckTimeout = 60

@@ -1,89 +1,50 @@
-# Monitor de Ofertas de Licores — v4.5.0
+# Monitor de Ofertas de Licores — v4.6.0
 
-Plataforma multi-tienda para **Licor3B** y **Líquidos.cl**. Recolecta ambos
-catálogos en paralelo, conserva historial en PostgreSQL, envía alertas
-inteligentes por Telegram y ahora compara productos equivalentes entre tiendas.
+Plataforma multi-tienda para **Licor3B** y **Líquidos.cl**. Recolecta los
+catálogos en paralelo, conserva historial en PostgreSQL, compara productos
+equivalentes y ahora ofrece un **buscador privado desde el navegador**.
 
-## Novedades de v4.5
+## Novedades de v4.6
 
-Después de terminar los dos collectors, el pipeline ejecuta:
+- Catálogo unificado enriquecido con marca, variante, volumen, cantidad y alias.
+- Motor de búsqueda tolerante a nombres incompletos y errores comunes.
+- Reconoce consultas como `jw black 750`, `etiqueta negra` o `jack honey`.
+- Agrupa las publicaciones equivalentes de ambas tiendas.
+- Muestra el mejor precio, ahorro, enlaces y fecha de actualización.
+- Página web privada protegida mediante `SEARCH_ACCESS_TOKEN`.
+- Endpoint JSON `/api/search` preparado para ser reutilizado por el bot v4.7.
+- CLI técnico: `python -m app.search.cli "johnnie black 750"`.
+- Migración Alembic `0005_search_catalog`.
 
-```text
-Productos de Licor3B + Productos de Líquidos
-                    ↓
-Normalización de nombre, marca, variante y volumen
-                    ↓
-Exclusión de packs y formatos ambiguos
-                    ↓
-Matching conservador con confidence score
-                    ↓
-Productos maestros compartidos
-                    ↓
-Comparación de precios
-                    ↓
-Telegram: tienda más barata, ahorro y enlaces
-```
+## Arquitectura de despliegue
 
-### Reglas de seguridad
-
-El sistema no compara automáticamente:
-
-- packs, cajas, combos o estuches;
-- productos sin volumen verificable;
-- volúmenes diferentes;
-- marcas incompatibles;
-- variantes diferentes, por ejemplo Black Label y Red Label;
-- candidatos ambiguos con puntajes casi idénticos.
-
-El umbral predeterminado de confianza es **86 %**.
-
-### Reporte comparativo
-
-Telegram puede mostrar:
+La misma base de código se usa en **dos servicios Railway**:
 
 ```text
-Johnnie Walker Black 750 ml
+Servicio 1 · Scraper cron
+Cada 6 horas
+Licor3B + Líquidos → PostgreSQL
 
-🥇 Líquidos: $21.990
-   Licor3B: $24.990
-Ahorro: $3.000 (12,0 %)
-Confianza del match: 96 %
+Servicio 2 · Buscador web
+Siempre activo
+Navegador → PostgreSQL
 ```
 
-El ranking comparativo:
+El servicio cron conserva `railway.toml`. El nuevo servicio web utiliza
+`railway.search.toml` y `search_entrypoint.sh`.
 
-- no tiene techo máximo de precio;
-- ordena por mayor diferencia porcentual y luego ahorro en CLP;
-- incluye hasta 20 oportunidades por defecto;
-- se reenvía cuando cambia o cada 24 horas;
-- avisa cuando cambia la tienda ganadora.
-
-## Ejecución
-
-Railway ejecuta el cron cada seis horas:
-
-```cron
-0 */6 * * *
-```
-
-Licor3B y Líquidos se procesan en paralelo con dos workers. Al terminar ambos,
-se ejecuta el comparador en una sola transacción de PostgreSQL.
-
-## Variables opcionales de v4.5
+## Variables del servicio web
 
 ```env
-CROSS_STORE_MATCH_MIN_CONFIDENCE_PERCENT=86
-TELEGRAM_COMPARISON_LIMIT=20
-TELEGRAM_WINNER_CHANGE_LIMIT=10
+DATABASE_URL=<referencia al mismo PostgreSQL>
+SEARCH_ACCESS_TOKEN=<clave privada larga>
+SEARCH_RESULT_LIMIT=8
+SEARCH_MAX_AGE_HOURS=72
 ```
 
-No es necesario agregarlas en Railway; esos valores ya son los predeterminados.
-
-## Base de datos
-
-v4.5 reutiliza las tablas existentes `master_products`, `product_matches`,
-`products`, `price_observations` y `alerts`. **No incluye una migración nueva**.
+Las dos últimas son opcionales. El buscador no abre las tiendas al consultar;
+lee los precios ya registrados en PostgreSQL.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V4.5.md`](DEPLOY_V4.5.md).
+Consulta [`DEPLOY_V4.6.md`](DEPLOY_V4.6.md).
