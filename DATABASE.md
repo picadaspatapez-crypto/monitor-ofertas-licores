@@ -823,3 +823,33 @@ Después de subir este documento:
 6. comprobar que las observaciones y ejecuciones se guarden correctamente.
 
 No se debe crear una segunda tienda antes de completar estos pasos.
+
+---
+
+# Estado implementado en v4.3
+
+La implementación productiva utiliza las tablas `stores`, `products`,
+`master_products`, `product_matches`, `price_observations`, `scrape_runs` y
+`alerts`. La migración `0004_smart_alerts` amplía `alerts` para que pueda
+representar tanto cambios de productos como eventos generales de una tienda.
+
+## alerts en v4.3
+
+| Columna | Uso |
+|---|---|
+| `product_id` | Producto relacionado; puede ser nulo para resúmenes o fallos de collector |
+| `store_id` | Tienda que originó la notificación |
+| `scrape_run_id` | Ejecución que detectó el evento |
+| `alert_type` | `price_drop`, `ranking_digest`, `collector_incident`, etc. |
+| `status` | `pending`, `sent` o `failed` |
+| `price` | Precio relacionado cuando corresponde; puede ser nulo |
+| `reason` | Explicación legible del envío |
+| `deduplication_key` | Clave única que impide duplicados |
+| `payload_hash` | SHA-256 del contenido lógico del evento |
+| `sent_at` | Fecha efectiva del envío |
+| `failed_at` | Fecha del último fallo de Telegram |
+| `error_message` | Error abreviado para diagnóstico y reintento |
+
+La reserva se crea antes de llamar a Telegram. Un evento ya enviado no vuelve a
+reservarse. Los eventos fallidos pueden reintentarse y una reserva pendiente
+abandonada se libera después de 30 minutos.

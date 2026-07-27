@@ -1,0 +1,4 @@
+[deploy]
+startCommand = "/app/entrypoint.sh"
+restartPolicyType = "NEVER"
+cronSchedule = "0 */6 * * *"

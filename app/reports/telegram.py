@@ -48,7 +48,7 @@ def _effective_discount_pct(saved: SavedProduct) -> float:
     return max(_real_drop_pct(saved), reported)
 
 
-def _ranked_best_prices(items: list[SavedProduct]) -> list[SavedProduct]:
+def ranked_best_prices(items: list[SavedProduct]) -> list[SavedProduct]:
     """Ordena oportunidades sin imponer un precio máximo.
 
     Prioridades:
@@ -99,14 +99,14 @@ def _ranking_reason(saved: SavedProduct) -> str:
     return "precio actual; sin descuento verificable"
 
 
-def build_telegram_messages(
+def build_summary_message(
     *, store_name: str, items: list[SavedProduct], analysis: CatalogAnalysis
-) -> list[str]:
+) -> str:
     stats = analysis.collection_stats
     health_icon = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}.get(
         stats.health_status, "⚪"
     )
-    selected = _ranked_best_prices(items)[:REPORT_LIMIT]
+    selected = ranked_best_prices(items)[:REPORT_LIMIT]
     summary = [
         f"📊 Ejecución completada: {store_name}",
         "",
@@ -133,61 +133,160 @@ def build_telegram_messages(
         "Ranking: mayor baja histórica o descuento informado; luego mayor ahorro.",
         "No se aplica un precio máximo: los productos caros también pueden entrar.",
     ]
-    messages = ["\n".join(summary)]
+    return "\n".join(summary)
 
-    if stats.section_stats:
-        lines = ["🗂 Resumen por categoría", ""]
-        for section in stats.section_stats:
-            icon = "✅" if section.status == "success" else "❌"
-            warning = " ⚠️" if section.structural_warning else ""
-            lines.append(
-                f"{icon} {section.name}: {section.unique_products} productos, "
-                f"{section.pages_visited} páginas, {duration_text(section.duration_ms)}{warning}"
-            )
-        messages.append("\n".join(lines))
 
+def build_smart_summary_message(
+    *,
+    store_name: str,
+    analysis: CatalogAnalysis,
+    reasons: list[str],
+    qualifying_drops: int,
+    min_drop_pct: float,
+    min_drop_amount: int,
+    digest_interval_hours: int,
+) -> str:
+    stats = analysis.collection_stats
+    health_icon = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}.get(
+        stats.health_status, "⚪"
+    )
+    lines = [
+        f"🤖 Monitor inteligente · {store_name}",
+        "",
+        f"{health_icon} Salud: {stats.health_status} ({stats.health_score}/100)",
+        f"⏱ Duración: {duration_text(analysis.duration_ms)}",
+        f"📦 Productos: {analysis.total}",
+        f"📉 Bajas totales detectadas: {analysis.price_drops}",
+        f"🚨 Bajas relevantes: {qualifying_drops}",
+        f"⚠️ Categorías fallidas: {stats.sections_failed}",
+        f"🧱 Alertas estructurales: {stats.structural_warnings}",
+        "",
+        "Motivo del envío:",
+    ]
+    lines.extend(f"• {reason}" for reason in reasons)
+    lines.extend(
+        [
+            "",
+            f"Umbral de baja: ≥ {min_drop_pct:.1%} o ≥ {clp(min_drop_amount)}.",
+            f"El ranking se repite como máximo cada {digest_interval_hours} h si no cambia.",
+            "Las ejecuciones sin novedades relevantes quedan registradas, pero no generan mensajes.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def build_category_summary_message(analysis: CatalogAnalysis) -> str | None:
+    stats = analysis.collection_stats
+    if not stats.section_stats:
+        return None
+    lines = ["🗂 Resumen por categoría", ""]
+    for section in stats.section_stats:
+        icon = "✅" if section.status == "success" else "❌"
+        warning = " ⚠️" if section.structural_warning else ""
+        lines.append(
+            f"{icon} {section.name}: {section.unique_products} productos, "
+            f"{section.pages_visited} páginas, {duration_text(section.duration_ms)}{warning}"
+        )
+    return "\n".join(lines)
+
+
+def build_incident_message(
+    *, store_name: str, analysis: CatalogAnalysis, recovery: bool
+) -> str:
+    stats = analysis.collection_stats
+    if recovery:
+        return "\n".join(
+            [
+                f"✅ Collector recuperado · {store_name}",
+                "",
+                f"Estado actual: {stats.health_status} ({stats.health_score}/100)",
+                f"Categorías correctas: {stats.sections_succeeded}",
+                f"Categorías fallidas: {stats.sections_failed}",
+                f"Productos encontrados: {analysis.total}",
+            ]
+        )
+
+    lines = [
+        f"⚠️ Incidencia del collector · {store_name}",
+        "",
+        f"Estado: {stats.health_status} ({stats.health_score}/100)",
+        f"Categorías fallidas: {stats.sections_failed}",
+        f"Alertas estructurales: {stats.structural_warnings}",
+        f"Productos encontrados: {analysis.total}",
+        "",
+    ]
     problems = [
-        section for section in stats.section_stats
+        section
+        for section in stats.section_stats
         if section.status != "success" or section.structural_warning
     ]
-    if problems:
-        lines = ["⚠️ Incidencias del collector", ""]
+    if not problems:
+        lines.append("El puntaje histórico detectó una caída anormal del catálogo.")
+    else:
         for section in problems:
             if section.status != "success":
-                lines.append(f"• {section.name}: {section.error_message or 'error desconocido'}")
-            elif section.structural_warning:
-                lines.append(f"• {section.name}: HTTP correcto, pero 0 tarjetas en la primera página.")
-        messages.append("\n".join(lines))
+                lines.append(
+                    f"• {section.name}: {section.error_message or 'error desconocido'}"
+                )
+            else:
+                lines.append(
+                    f"• {section.name}: HTTP correcto, pero 0 tarjetas en la primera página."
+                )
+    return "\n".join(lines).rstrip()
 
-    drops = sorted(
-        (item for item in items if item.price_dropped),
-        key=lambda item: (item.price_change_pct, item.item.name.casefold()),
-    )[:CHANGE_LIMIT]
-    if drops:
-        lines = ["🔥 Mayores bajas reales", ""]
-        for saved in drops:
-            lines.extend(_change_lines(saved))
-        messages.append("\n".join(lines))
 
-    increases = sorted(
-        (item for item in items if item.price_increased),
-        key=lambda item: (-item.price_change_pct, item.item.name.casefold()),
-    )[:CHANGE_LIMIT]
-    if increases:
-        lines = ["📈 Mayores alzas", ""]
-        for saved in increases:
-            lines.extend(_change_lines(saved))
-        messages.append("\n".join(lines))
+def build_price_drops_message(
+    *,
+    store_name: str,
+    items: list[SavedProduct],
+    min_drop_pct: float,
+    min_drop_amount: int,
+) -> str:
+    lines = [f"🔥 Bajas relevantes · {store_name}", ""]
+    for saved in items:
+        lines.extend(_change_lines(saved))
+        if saved.previous_price is not None:
+            lines.append(f"  Ahorro: {clp(saved.previous_price - saved.item.current_price)}")
+        lines.append(f"  {saved.item.url}")
+        lines.append("")
+    lines.extend(
+        [
+            f"Umbral aplicado: ≥ {min_drop_pct:.1%} o ≥ {clp(min_drop_amount)}.",
+            "Una baja sin cambios posteriores no vuelve a notificarse en la siguiente revisión.",
+        ]
+    )
+    return "\n".join(lines).rstrip()
 
-    new_items = _alphabetical([item for item in items if item.is_new])[:CHANGE_LIMIT]
-    if new_items:
-        lines = ["🆕 Productos nuevos", ""]
-        for saved in new_items:
-            lines.extend(_change_lines(saved))
-        messages.append("\n".join(lines))
 
+def build_price_increases_message(
+    *, store_name: str, items: list[SavedProduct]
+) -> str:
+    lines = [f"📈 Alzas observadas · {store_name}", ""]
+    for saved in items:
+        lines.extend(_change_lines(saved))
+        lines.append(f"  {saved.item.url}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def build_new_products_message(
+    *, store_name: str, items: list[SavedProduct]
+) -> str:
+    lines = [f"🆕 Productos nuevos · {store_name}", ""]
+    for saved in items:
+        lines.extend(_change_lines(saved))
+        lines.append(f"  {saved.item.url}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def build_ranking_messages(
+    *, store_name: str, items: list[SavedProduct], report_limit: int = REPORT_LIMIT
+) -> list[str]:
+    selected = ranked_best_prices(items)[: max(1, report_limit)]
+    messages: list[str] = []
     for start in range(0, len(selected), ITEMS_PER_MESSAGE):
-        group = selected[start:start + ITEMS_PER_MESSAGE]
+        group = selected[start : start + ITEMS_PER_MESSAGE]
         lines = [
             f"🏆 Mejores precios {start + 1}-{start + len(group)} "
             f"de {len(selected)} · {store_name}",
@@ -211,5 +310,71 @@ def build_telegram_messages(
 
             lines += [f"Motivo del ranking: {_ranking_reason(saved)}", item.url, ""]
         messages.append("\n".join(lines).rstrip())
+    return messages
 
+
+def build_telegram_messages(
+    *, store_name: str, items: list[SavedProduct], analysis: CatalogAnalysis
+) -> list[str]:
+    """Reporte completo heredado de v4.2.
+
+    Se mantiene como API pública y para pruebas. La v4.3 utiliza la política
+    inteligente de ``app.notifications`` en el pipeline productivo.
+    """
+    messages = [build_summary_message(store_name=store_name, items=items, analysis=analysis)]
+
+    category_summary = build_category_summary_message(analysis)
+    if category_summary:
+        messages.append(category_summary)
+
+    stats = analysis.collection_stats
+    if (
+        stats.health_status != "HEALTHY"
+        or stats.sections_failed > 0
+        or stats.structural_warnings > 0
+    ):
+        messages.append(
+            build_incident_message(
+                store_name=store_name,
+                analysis=analysis,
+                recovery=False,
+            )
+        )
+
+    drops = sorted(
+        (item for item in items if item.price_dropped),
+        key=lambda item: (item.price_change_pct, item.item.name.casefold()),
+    )[:CHANGE_LIMIT]
+    if drops:
+        messages.append(
+            build_price_drops_message(
+                store_name=store_name,
+                items=drops,
+                min_drop_pct=0.0,
+                min_drop_amount=0,
+            )
+        )
+
+    increases = sorted(
+        (item for item in items if item.price_increased),
+        key=lambda item: (-item.price_change_pct, item.item.name.casefold()),
+    )[:CHANGE_LIMIT]
+    if increases:
+        messages.append(
+            build_price_increases_message(store_name=store_name, items=increases)
+        )
+
+    new_items = _alphabetical([item for item in items if item.is_new])[:CHANGE_LIMIT]
+    if new_items:
+        messages.append(
+            build_new_products_message(store_name=store_name, items=new_items)
+        )
+
+    messages.extend(
+        build_ranking_messages(
+            store_name=store_name,
+            items=items,
+            report_limit=REPORT_LIMIT,
+        )
+    )
     return messages

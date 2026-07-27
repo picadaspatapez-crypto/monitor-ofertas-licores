@@ -12,7 +12,22 @@ def start_scrape_run(session: Session, store: Store) -> ScrapeRun:
     return run
 
 
-def previous_successful_product_count(session: Session, store: Store, current_run_id: int) -> int | None:
+def _previous_run_query(store: Store, current_run_id: int):
+    return (
+        select(ScrapeRun)
+        .where(
+            ScrapeRun.store_id == store.id,
+            ScrapeRun.id != current_run_id,
+            ScrapeRun.finished_at.is_not(None),
+        )
+        .order_by(ScrapeRun.finished_at.desc(), ScrapeRun.id.desc())
+        .limit(1)
+    )
+
+
+def previous_successful_product_count(
+    session: Session, store: Store, current_run_id: int
+) -> int | None:
     value = session.scalar(
         select(ScrapeRun.products_found)
         .where(
@@ -20,10 +35,17 @@ def previous_successful_product_count(session: Session, store: Store, current_ru
             ScrapeRun.status == "success",
             ScrapeRun.id != current_run_id,
         )
-        .order_by(ScrapeRun.finished_at.desc())
+        .order_by(ScrapeRun.finished_at.desc(), ScrapeRun.id.desc())
         .limit(1)
     )
     return int(value) if value is not None else None
+
+
+def previous_health_status(
+    session: Session, store: Store, current_run_id: int
+) -> str | None:
+    run = session.scalar(_previous_run_query(store, current_run_id))
+    return run.health_status if run is not None else None
 
 
 def finish_scrape_run(

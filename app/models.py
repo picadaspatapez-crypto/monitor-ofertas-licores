@@ -43,6 +43,7 @@ class Store(Base):
 
     products: Mapped[list[Product]] = relationship(back_populates="store_record")
     scrape_runs: Mapped[list[ScrapeRun]] = relationship(back_populates="store")
+    alerts: Mapped[list[Alert]] = relationship(back_populates="store")
 
 
 class MasterProduct(Base):
@@ -169,6 +170,7 @@ class ScrapeRun(Base):
     observations: Mapped[list[PriceObservation]] = relationship(
         back_populates="scrape_run"
     )
+    alerts: Mapped[list[Alert]] = relationship(back_populates="scrape_run")
 
 
 class PriceObservation(Base):
@@ -196,16 +198,27 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id"), nullable=True, index=True
+    )
+    store_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stores.id"), nullable=True, index=True
+    )
+    scrape_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scrape_runs.id"), nullable=True, index=True
+    )
     alert_type: Mapped[str] = mapped_column(String(50), index=True)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     channel: Mapped[str] = mapped_column(String(30), default="telegram")
-    price: Mapped[int] = mapped_column(Integer)
+    price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reason: Mapped[str] = mapped_column(Text)
     deduplication_key: Mapped[str] = mapped_column(String(255), unique=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    product: Mapped[Product] = relationship(back_populates="alerts")
+    product: Mapped[Product | None] = relationship(back_populates="alerts")
+    store: Mapped[Store | None] = relationship(back_populates="alerts")
+    scrape_run: Mapped[ScrapeRun | None] = relationship(back_populates="alerts")

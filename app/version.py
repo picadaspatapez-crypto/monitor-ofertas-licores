@@ -1,2 +1,2 @@
-__version__ = "4.2.0"
-RELEASE_NAME = "Best Price Ranking"
+__version__ = "4.3.0"
+RELEASE_NAME = "Smart Alerts & Railway Cron"

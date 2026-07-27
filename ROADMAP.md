@@ -24,7 +24,7 @@ no únicamente en los descuentos informados por las tiendas.
 ### Tiendas objetivo
 
 -   ✅ Licor3B
--   ⏳ Líquidos
+-   ✅ Líquidos
 -   ⏳ La Barra
 -   ⏳ Donde La Negra
 -   ⏳ La Modelo
@@ -159,20 +159,18 @@ Funciones futuras:
 ## Estado
 
 El proyecto ya se encuentra en funcionamiento y puede recopilar
-productos automáticamente. La siguiente prioridad es mejorar la calidad
-de los datos y construir el motor de inteligencia sobre la base de
-información histórica y comparativa.
+productos automáticamente. La siguiente prioridad es estructurar marca, volumen y pack para mejorar la calidad del matching entre tiendas.
 
 ## Estado v4
 
 - v4.0: base multi-tienda desplegada.
 - v4.1: collector de Líquidos incorporado.
 - v4.2: ranking de mejores precios, sin techo y 30 productos por tienda.
-- Próximo: v4.3, periodicidad y control de alertas repetidas.
+- v4.3: Railway Cron cada seis horas y alertas inteligentes deduplicadas.
 
 
 ## Ajuste de roadmap desde v4.2
 
 - **v4.2.0 — Best Price Ranking:** 30 productos por tienda, sin techo de precio.
-- **v4.3:** periodicidad y control de alertas repetidas.
+- **v4.3.0 — Smart Alerts & Railway Cron:** completada.
 - El resto del camino técnico continúa en `docs/V4_ROADMAP.md`.

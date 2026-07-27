@@ -1,5 +1,19 @@
 # Changelog
 
+## v4.3.0 — Smart Alerts & Railway Cron
+
+- Programa Railway Cron cada seis horas mediante `railway.toml`.
+- Mantiene ejecución de una sola pasada y salida limpia al terminar.
+- Usa PostgreSQL para reservar, enviar, fallar y deduplicar alertas.
+- Envía bajas reales cuando superan 5 % o $1.000 CLP por defecto.
+- Mantiene el ranking de 30 productos sin techo de precio.
+- Reenvía el ranking solo si cambia o después de 24 horas.
+- Silencia ejecuciones sin novedades relevantes.
+- Notifica collector degradado, roto, recuperado o con excepción.
+- Evita repetir la misma incidencia más de una vez cada 24 horas.
+- Añade migración Alembic `0004_smart_alerts`.
+- Añade variables opcionales para umbrales y tipos de alerta.
+
 ## v4.2.0 — Best Price Ranking
 
 - Reemplaza el catálogo alfabético por un ranking de oportunidades de precio.

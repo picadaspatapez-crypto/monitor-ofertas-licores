@@ -1,254 +1,75 @@
-# Arquitectura del Monitor de Ofertas de Licores
+# Arquitectura implementada — v4.3
 
-**Versión:** 0.1  
-**Estado:** Diseño inicial del MVP  
-**Plataforma:** Railway + PostgreSQL + Telegram
-
-## 1. Objetivo
-
-Construir una plataforma que monitoree tiendas chilenas de vinos y licores, guarde historial de precios y detecte oportunidades de compra para reventa principalmente en Facebook Marketplace y Mercado Libre.
-
-## 2. Alcance inicial
-
-Tiendas:
-- Licor3B
-- Líquidos
-- La Barra
-- Donde La Negra
-- Distribuidora La Modelo
-
-Categorías:
-- Vinos
-- Whisky
-- Ron
-- Gin
-- Vodka
-- Tequila
-- Espumantes
-- Licores
-- Packs y cajas
-
-Reglas iniciales:
-- Presupuesto por compra: $100.000 CLP
-- Máximo por unidad: $30.000 CLP
-- Máximo por producto: 3 unidades
-- Margen objetivo mínimo: 20%
-- Comuna de referencia: La Reina
-- Canal de alertas: Telegram
-
-## 3. Principios
-
-1. Cada módulo tendrá una sola responsabilidad.
-2. Cada tienda tendrá un conector independiente.
-3. Los conectores recolectan datos; no deciden si una compra conviene.
-4. Toda observación válida debe guardarse en PostgreSQL.
-5. Un error en una tienda no debe detener las demás.
-6. Credenciales y límites se configuran mediante variables de entorno.
-7. Se preferirá HTTP simple; Playwright se usará solo cuando JavaScript lo haga necesario.
-
-## 4. Flujo general
+## Flujo de ejecución
 
 ```text
-Railway Cron
-    |
-    v
-Orquestador
-    |
-    v
-Conector de tienda
-    |
-    v
-Descargador HTTP / navegador
-    |
-    v
-Parser
-    |
-    v
-Normalizador y validador
-    |
-    v
-PostgreSQL
-    |
-    v
-Motor de precios
-    |
-    v
-Motor de oportunidades
-    |
-    v
+Railway Cron (cada 6 h)
+        ↓
+Collector Registry
+        ↓
+Licor3B ─────────┐
+                 ├─→ persistencia + historial PostgreSQL
+Líquidos ────────┘
+        ↓
+Análisis histórico y salud
+        ↓
+Política de alertas inteligentes
+        ↓
+Reserva deduplicada en alerts
+        ↓
 Telegram
+        ↓
+Proceso terminado
 ```
 
-## 5. Componentes
+## Principios operativos
 
-### Scheduler
-Ejecuta el monitor periódicamente. Frecuencia inicial sugerida:
+1. El proceso es de una sola pasada; no contiene un bucle infinito.
+2. Railway controla la periodicidad y no se mantienen recursos activos entre ejecuciones.
+3. Un collector fallido no impide ejecutar la tienda siguiente.
+4. El historial de precios se guarda aunque Telegram falle.
+5. Cada mensaje lógico se reserva en PostgreSQL antes del envío.
+6. Los rankings idénticos no se repiten dentro del intervalo configurado.
+7. Los productos no tienen techo de precio para ingresar al ranking.
 
-```cron
-0 * * * *
-```
-
-### Orquestador
-Carga configuración, ejecuta tiendas activas, registra resultados, guarda datos y genera alertas.
-
-### Conectores
-Cada tienda tendrá un módulo capaz de descubrir categorías, recorrer paginación, extraer productos y aislar errores.
-
-### Descargadores
-- HTTP: `requests` + `BeautifulSoup`.
-- Navegador futuro: Playwright.
-
-### Parser
-Extrae nombre, marca, categoría, formato, volumen, graduación, precio actual, precio normal, descuento, stock, SKU, EAN, URL e imagen cuando estén disponibles.
-
-### Normalizador
-Convierte datos a un formato común, por ejemplo:
-- `750 cc` → `750 ml`
-- `1 Lt` → `1000 ml`
-- precios en texto → enteros CLP
-
-### Validador
-Revisa precio, nombre, URL, moneda, duplicados, volumen y coherencia entre precio normal y precio oferta.
-
-### Repositorios
-Única capa autorizada para leer y escribir datos en PostgreSQL.
-
-### Motor de comparación
-Empareja publicaciones de distintas tiendas usando:
-1. EAN.
-2. SKU o código del fabricante.
-3. Marca + nombre + volumen.
-4. Coincidencia difusa.
-5. Revisión manual.
-
-### Motor de precios
-Calcula precio mínimo, máximo, promedio, mediana, variación y diferencia frente a otras tiendas.
-
-### Motor de oportunidades
-Entrega:
-- `opportunity_score` de 0 a 100;
-- recomendación;
-- unidades sugeridas;
-- inversión;
-- utilidad;
-- margen;
-- explicación.
-
-### Alertas
-Telegram enviará productos nuevos, bajas de precio y oportunidades. No repetirá una alerta sin cambio de precio, stock, margen o puntuación.
-
-## 6. Modelo de datos
-
-### stores
-Información y estado de cada tienda.
-
-### categories
-Categorías descubiertas por tienda.
-
-### products
-Identidad normalizada del producto.
-
-### store_products
-Publicación concreta de un producto en una tienda.
-
-### price_observations
-Historial de precio y stock.
-
-### scrape_runs
-Registro técnico de cada ejecución.
-
-### alerts
-Historial y estado de alertas.
-
-### product_matches
-Relación entre publicaciones y productos normalizados, con nivel de confianza.
-
-## 7. Estructura objetivo
+## Módulos principales
 
 ```text
-monitor-ofertas-licores/
-├── app/
-│   ├── config/
-│   ├── connectors/
-│   │   ├── base.py
-│   │   └── licor3b/
-│   ├── downloaders/
-│   ├── normalization/
-│   ├── validation/
-│   ├── database/
-│   ├── repositories/
-│   ├── engines/
-│   ├── notifications/
-│   ├── orchestration/
-│   └── main.py
-├── tests/
-├── migrations/
-├── scripts/
-├── ARCHITECTURE.md
-├── README.md
-├── Dockerfile
-├── requirements.txt
-└── .env.example
+app/
+├── collectors/       # Implementaciones independientes por tienda
+├── pipeline/          # Orquestación de una ejecución completa
+├── repositories/      # Escritura y lectura PostgreSQL
+├── analyzers/         # Cambios históricos y salud del catálogo
+├── notifications/     # Política que decide qué merece Telegram
+├── reports/           # Formato de mensajes
+├── services/          # Entrega a Telegram y estado de alertas
+├── matching/          # Normalización inicial de productos
+└── models.py          # Modelo SQLAlchemy
 ```
 
-## 8. Estrategia para Licor3B
+## Periodicidad
 
-La versión actual revisa solo la sección de ofertas.
+`railway.toml` configura `0 */6 * * *` y `restartPolicyType = "NEVER"`.
+Railway inicia el contenedor, `entrypoint.sh` aplica Alembic, ejecuta el pipeline
+y el proceso sale. Si una ejecución se solapa con la siguiente, Railway omite la
+nueva ejecución.
 
-El siguiente conector debe:
-1. descubrir categorías;
-2. recorrer todas las páginas;
-3. extraer el catálogo completo;
-4. eliminar duplicados;
-5. guardar productos y precios;
-6. detectar nuevos productos y cambios;
-7. continuar aunque una página falle.
+## Política de alertas
 
-No se incorporará una segunda tienda hasta que Licor3B tenga catálogo completo, historial, registro de ejecuciones y alertas sin duplicados.
+### Inmediatas
 
-## 9. Manejo de errores
+- bajas reales que superen el umbral porcentual o absoluto;
+- cambio a `DEGRADED` o `BROKEN`;
+- cambio estructural o categoría fallida;
+- recuperación a `HEALTHY`;
+- excepción completa del collector.
 
-Errores recuperables:
-- timeout;
-- error HTTP temporal;
-- producto incompleto;
-- página individual defectuosa.
+### Digest
 
-Errores críticos:
-- credenciales ausentes;
-- base de datos inaccesible;
-- configuración inválida;
-- estructura completa no reconocida.
+El top 30 se envía si su huella cambia o si vence el intervalo de refresco. La
+huella incorpora posición, producto, precio actual, precio regular y descuento.
 
-Nunca se registrarán tokens, contraseñas ni `DATABASE_URL` en los logs.
+### Silenciosas
 
-## 10. Pruebas
-
-- Unitarias: precios, volúmenes, nombres, descuentos y margen.
-- Parser: HTML guardado en `tests/fixtures`.
-- Integración: PostgreSQL y alertas duplicadas.
-- Humo: configuración, base de datos, lectura de tienda y Telegram.
-
-## 11. Roadmap
-
-### Etapa 1
-Estabilizar Licor3B y monitorear catálogo completo.
-
-### Etapa 2
-Incorporar Líquidos y comparación entre tiendas.
-
-### Etapa 3
-Calcular rentabilidad neta y unidades sugeridas.
-
-### Etapa 4
-Añadir La Barra, Donde La Negra y La Modelo.
-
-### Etapa 5
-Crear dashboard.
-
-### Etapa 6
-Agregar estacionalidad, predicción y optimización del presupuesto.
-
-## 12. Próximo entregable
-
-El próximo cambio de código será el conector de catálogo completo de Licor3B, compatible con esta arquitectura. Todavía no se añadirá una segunda tienda ni inteligencia avanzada.
+Una ejecución sana sin cambios relevantes se conserva en `scrape_runs` y
+`price_observations`, pero no genera mensajes.
