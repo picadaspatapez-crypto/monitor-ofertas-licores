@@ -12,21 +12,21 @@ def get_or_create_store(
     base_url: str,
     connector_key: str,
     requires_browser: bool,
+    country_code: str = "CL",
+    currency_code: str = "CLP",
 ) -> Store:
+    """Crea la tienda o sincroniza sus metadatos declarativos."""
     store = session.scalar(select(Store).where(Store.slug == slug))
-    if store is not None:
-        return store
+    if store is None:
+        store = Store(slug=slug)
+        session.add(store)
 
-    store = Store(
-        name=name,
-        slug=slug,
-        base_url=base_url,
-        connector_key=connector_key,
-        is_active=True,
-        requires_browser=requires_browser,
-        country_code="CL",
-        currency_code="CLP",
-    )
-    session.add(store)
+    store.name = name
+    store.base_url = base_url
+    store.connector_key = connector_key
+    store.is_active = True
+    store.requires_browser = requires_browser
+    store.country_code = country_code
+    store.currency_code = currency_code
     session.flush()
     return store

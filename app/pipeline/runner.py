@@ -18,15 +18,8 @@ from app.repositories import (
     start_scrape_run,
 )
 from app.services.telegram import send_message
+from app.version import RELEASE_NAME, __version__
 
-
-def _store_metadata(collector_key: str) -> dict[str, object]:
-    if collector_key == "licor3b":
-        return {
-            "name": "Licor3B", "slug": "licor3b", "base_url": "https://licor3b.cl/",
-            "connector_key": "licor3b", "requires_browser": True,
-        }
-    raise RuntimeError(f"Collector sin metadatos: {collector_key}")
 
 
 def _metrics_dict(stats, previous_count: int | None) -> dict:
@@ -103,10 +96,13 @@ def run_pipeline() -> int:
     engine, SessionLocal = create_database(settings.database_url)
     Base.metadata.create_all(engine)
     failures = 0
+    collectors = enabled_collectors()
+    print(f"Monitor de Licores v{__version__} · {RELEASE_NAME}", flush=True)
+    print(f"Collectors habilitados: {', '.join(item.key for item in collectors)}", flush=True)
 
-    for collector in enabled_collectors():
+    for collector in collectors:
         run_id = None
-        meta = _store_metadata(collector.key)
+        meta = collector.metadata.repository_kwargs()
         try:
             with SessionLocal() as session:
                 store = get_or_create_store(session, **meta)
@@ -181,4 +177,11 @@ def run_pipeline() -> int:
                     print(f"No se pudo registrar el error: {tracking_error}", file=sys.stderr)
             print(f"Error en collector {collector.key}: {exc}", file=sys.stderr)
 
+    total_collectors = len(collectors)
+    print("=" * 58, flush=True)
+    print("RESUMEN GLOBAL MULTI-TIENDA", flush=True)
+    print(f"Collectors registrados...: {total_collectors}", flush=True)
+    print(f"Collectors correctos......: {total_collectors - failures}", flush=True)
+    print(f"Collectors fallidos.......: {failures}", flush=True)
+    print("=" * 58, flush=True)
     return 1 if failures else 0

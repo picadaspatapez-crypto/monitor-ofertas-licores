@@ -16,6 +16,7 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+from app.collectors.base import StoreMetadata
 from app.domain import (
     CollectedProduct,
     CollectionBatch,
@@ -418,8 +419,15 @@ def _collect_products() -> CollectionBatch:
 
 
 class Licor3BCollector:
-    key = "licor3b"
-    store_name = "Licor3B"
+    metadata = StoreMetadata(
+        name="Licor3B",
+        slug="licor3b",
+        base_url="https://licor3b.cl/",
+        connector_key="licor3b",
+        requires_browser=True,
+    )
+    key = metadata.connector_key
+    store_name = metadata.name
 
     def collect(self) -> CollectionBatch:
         return _collect_products()

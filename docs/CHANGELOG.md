@@ -37,3 +37,14 @@
 - Collector Health Score.
 - Persistencia de observabilidad mediante Alembic 0003.
 - Resumen de salud y categorías en Telegram.
+
+## v4.0 — Multi-store Foundation
+
+- Incorpora `StoreMetadata` como contrato declarativo de cada tienda.
+- Elimina del pipeline los metadatos hardcodeados de Licor3B.
+- Valida keys, slugs y connector keys duplicados al iniciar.
+- Sincroniza metadatos de tiendas existentes sin una migración nueva.
+- Agrega resumen global de collectors al finalizar la ejecución.
+- Publica la versión en logs mediante `app/version.py`.
+- Añade pruebas del registry y un roadmap de máximo once entregas hasta v5.0.
+- No cambia el comportamiento de recolección de Licor3B.

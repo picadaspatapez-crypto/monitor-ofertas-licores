@@ -1,12 +1,20 @@
-# Monitor de Ofertas de Licores v2.0
+# Monitor de Ofertas de Licores v4.0
 
 Plataforma modular de recolección e inteligencia de precios para tiendas chilenas.
 
-## Arquitectura
+## Estado de esta versión
+
+**v4.0 — Multi-store Foundation** desacopla por completo los metadatos de cada tienda del pipeline. Licor3B continúa funcionando igual, pero una nueva tienda ya puede registrarse declarando su collector y agregándolo al registry, sin introducir condiciones en el runner.
 
 ```text
-Collector -> Pipeline -> Matching -> PostgreSQL -> Analyzer -> Report -> Telegram
+Collector registry
+       ↓
+Collect → Persist → Analyze → Report
+       ↓
+ PostgreSQL + Telegram
 ```
+
+Esta entrega no modifica el esquema de PostgreSQL y no requiere variables nuevas en Railway.
 
 ## Ejecución
 
@@ -21,12 +29,8 @@ python main.py
 pytest -q
 ```
 
-Consulta `docs/V2_ARCHITECTURE.md` y `docs/MIGRATION_V2.md`.
+## Próximo paso
 
-## Cobertura Licor3B
+La v4.1 incorporará el collector inicial de Líquidos.cl sobre esta base multi-tienda.
 
-Desde v2.2, Licor3B se recopila por categorías raíz y no solo desde la página de ofertas. Consulta `docs/LICOR3B_FULL_CATALOG.md` para modos de ejecución y diagnóstico.
-
-## Estado de Licor3B
-
-El collector de Licor3B está cerrado en v3.0 y siempre recorre el catálogo completo. Descubre automáticamente las categorías, continúa ante fallos aislados y persiste métricas de salud por ejecución. No necesita `LICOR3B_CATALOG_MODE`. Consulta `docs/LICOR3B_FINAL.md`.
+Consulta `docs/V4_ROADMAP.md` para la ruta completa hasta v5.0.
