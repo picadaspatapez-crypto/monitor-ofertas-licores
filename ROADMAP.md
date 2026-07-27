@@ -162,3 +162,9 @@ El proyecto ya se encuentra en funcionamiento y puede recopilar
 productos automáticamente. La siguiente prioridad es mejorar la calidad
 de los datos y construir el motor de inteligencia sobre la base de
 información histórica y comparativa.
+
+## Estado v4
+
+- v4.0: base multi-tienda desplegada.
+- v4.1: collector de Líquidos incorporado.
+- Próximo: v4.2, endurecimiento con los primeros logs reales del nuevo sitio.

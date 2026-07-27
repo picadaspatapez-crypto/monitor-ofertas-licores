@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.1.0 — Líquidos Collector
+
+- Segundo collector activo: Líquidos.cl.
+- Descubrimiento de categorías con respaldo.
+- Soporte para carga infinita, cargar más y siguiente.
+- Parser de productos y precios que excluye precio por litro.
+- Deduplicación global y membresía de categorías.
+- Métricas, historial y Telegram independientes por tienda.
+- Sin variables ni migraciones nuevas.
+
 ## 2.0.0
 
 - Introduce collectors, pipeline, repositories, analyzers y reports.

@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from app.collectors.base import Collector
 from app.collectors.licor3b import Licor3BCollector
+from app.collectors.liquidos import LiquidosCollector
 
 
 CollectorFactory = Callable[[], Collector]
@@ -12,6 +13,7 @@ CollectorFactory = Callable[[], Collector]
 # contiene condiciones por tienda y no necesita conocer selectores ni URLs.
 COLLECTOR_FACTORIES: tuple[CollectorFactory, ...] = (
     Licor3BCollector,
+    LiquidosCollector,
 )
 
 
