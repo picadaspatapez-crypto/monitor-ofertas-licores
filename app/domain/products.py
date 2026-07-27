@@ -30,6 +30,7 @@ class SectionStats:
     status: str = "success"
     error_message: str | None = None
     structural_warning: bool = False
+    performance_ms: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class CollectionStats:
     health_score: int = 0
     structural_warnings: int = 0
     section_stats: tuple[SectionStats, ...] = ()
+    performance_ms: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -14,22 +14,31 @@ from playwright.sync_api import (
     BrowserContext,
     Locator,
     Page,
-    TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
 from app.collectors.base import StoreMetadata
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
+from app.performance import (
+    PerformanceSettings,
+    PhaseMetrics,
+    ResourceBlockStats,
+    install_resource_blocking,
+    wait_for_any_selector,
+    wait_for_product_count_growth,
+    wait_for_signature_change,
+)
 
 
 BASE_URL = "https://www.liquidos.cl"
 HOME_URL = f"{BASE_URL}/"
-NAVIGATION_TIMEOUT_MS = 60_000
-PAGE_SETTLE_MS = 3_000
+NAVIGATION_TIMEOUT_MS = 40_000
 MAX_PAGES_PER_SECTION = 80
 MAX_LOAD_MORE_CLICKS = 30
-MAX_SCROLL_ROUNDS = 12
-MAX_STABLE_ROUNDS = 3
+MAX_SCROLL_ROUNDS = 8
+MAX_STABLE_ROUNDS = 2
+PRODUCT_SELECTOR = "a[href*='/productos/']"
+CATEGORY_SELECTOR = "a[href*='/categorias/']"
 
 # Fuerza la modalidad de precio web programado, que es más estable que una
 # disponibilidad inmediata dependiente de un local concreto.
@@ -321,8 +330,12 @@ def _merge_product(existing: CollectedProduct | None, incoming: CollectedProduct
     return replace(selected, source_sections=sections)
 
 
-def _create_context(browser: Browser) -> BrowserContext:
-    return browser.new_context(
+def _create_context(
+    browser: Browser,
+    performance: PerformanceSettings,
+    block_stats: ResourceBlockStats,
+) -> BrowserContext:
+    context = browser.new_context(
         locale="es-CL",
         timezone_id="America/Santiago",
         viewport={"width": 1440, "height": 1000},
@@ -332,15 +345,25 @@ def _create_context(browser: Browser) -> BrowserContext:
         ),
         extra_http_headers={"Accept-Language": "es-CL,es;q=0.9,en;q=0.7"},
     )
+    install_resource_blocking(
+        context,
+        enabled=performance.block_browser_resources,
+        stats=block_stats,
+    )
+    return context
 
-
-def _wait_for_page(page: Page) -> None:
-    try:
-        page.wait_for_load_state("networkidle", timeout=20_000)
-    except PlaywrightTimeoutError:
-        pass
-    page.wait_for_timeout(PAGE_SETTLE_MS)
-
+def _wait_for_catalog_content(
+    page: Page,
+    performance: PerformanceSettings,
+    *,
+    discovery: bool = False,
+) -> bool:
+    return wait_for_any_selector(
+        page,
+        CATEGORY_SELECTOR if discovery else PRODUCT_SELECTOR,
+        timeout_ms=performance.product_wait_timeout_ms,
+        settle_ms=performance.quick_settle_ms,
+    )
 
 def _dismiss_overlays(page: Page) -> None:
     try:
@@ -384,7 +407,7 @@ def _click_visible(locator: Locator) -> bool:
     return False
 
 
-def _expand_current_page(page: Page) -> None:
+def _expand_current_page(page: Page, performance: PerformanceSettings) -> None:
     stable_rounds = 0
     previous_count = len(_product_signature(page))
     load_more_selectors = (
@@ -398,19 +421,25 @@ def _expand_current_page(page: Page) -> None:
     for _ in range(MAX_LOAD_MORE_CLICKS):
         _dismiss_overlays(page)
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(1_200)
         clicked = any(_click_visible(page.locator(selector)) for selector in load_more_selectors)
-        if clicked:
-            page.wait_for_timeout(2_000)
+        grew = wait_for_product_count_growth(
+            page,
+            PRODUCT_SELECTOR,
+            previous_count,
+            timeout_ms=(
+                performance.dom_growth_timeout_ms
+                if clicked
+                else min(700, performance.dom_growth_timeout_ms)
+            ),
+        )
         current_count = len(_product_signature(page))
-        if current_count > previous_count:
+        if grew or current_count > previous_count:
             stable_rounds = 0
             previous_count = current_count
         else:
             stable_rounds += 1
         if stable_rounds >= MAX_STABLE_ROUNDS and not clicked:
             break
-
 
 def _next_href(page: Page) -> str | None:
     selectors = (
@@ -432,27 +461,41 @@ def _next_href(page: Page) -> str | None:
     return None
 
 
-def _click_next_button(page: Page, before_signature: tuple[str, ...]) -> bool:
+def _click_next_button(
+    page: Page,
+    before_signature: tuple[str, ...],
+    performance: PerformanceSettings,
+) -> bool:
     selectors = (
         "button[aria-label*='siguiente' i]",
         "button[aria-label*='next' i]",
         "button:has-text('Siguiente')",
     )
+    try:
+        previous = page.locator(PRODUCT_SELECTOR).evaluate_all(
+            "els => els.map(el => el.href || '').filter(Boolean).sort().join('|')"
+        )
+    except Exception:
+        previous = "|".join(before_signature)
     for selector in selectors:
         locator = page.locator(selector)
         if not _click_visible(locator):
             continue
-        page.wait_for_timeout(2_500)
-        _wait_for_page(page)
-        if _product_signature(page) != before_signature:
+        if wait_for_signature_change(
+            page,
+            PRODUCT_SELECTOR,
+            previous,
+            timeout_ms=performance.dom_growth_timeout_ms,
+        ):
             return True
     return False
 
-
-def _discover_sections(page: Page) -> tuple[tuple[CatalogSection, ...], str]:
+def _discover_sections(
+    page: Page, performance: PerformanceSettings
+) -> tuple[tuple[CatalogSection, ...], str]:
     try:
         page.goto(_catalog_url(HOME_URL), wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
-        _wait_for_page(page)
+        _wait_for_catalog_content(page, performance, discovery=True)
         _dismiss_overlays(page)
         sections = _discover_sections_from_html(page.content())
         if sections:
@@ -485,15 +528,21 @@ def _collect_products() -> CollectionBatch:
     section_results: list[SectionStats] = []
     last_html = ""
 
+    performance = PerformanceSettings.from_env()
+    collector_started = time.monotonic()
+    aggregate_metrics = PhaseMetrics()
+    block_stats = ResourceBlockStats()
+
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking"],
         )
-        context = _create_context(browser)
+        context = _create_context(browser, performance, block_stats)
         page = context.new_page()
         try:
-            sections, discovery_source = _discover_sections(page)
+            with aggregate_metrics.measure("discovery"):
+                sections, discovery_source = _discover_sections(page, performance)
             print(
                 f"Líquidos catálogo: categorías={len(sections)}, origen={discovery_source} "
                 f"[{', '.join(section.name for section in sections)}]",
@@ -502,6 +551,7 @@ def _collect_products() -> CollectionBatch:
 
             for index, section in enumerate(sections, start=1):
                 started = time.monotonic()
+                phase_metrics = PhaseMetrics()
                 section_products: set[str] = set()
                 section_cards = section_duplicates = section_pages = 0
                 status = "success"
@@ -522,25 +572,28 @@ def _collect_products() -> CollectionBatch:
                             if next_url in visited_urls:
                                 break
                             visited_urls.add(next_url)
-                            response = page.goto(
-                                next_url,
-                                wait_until="domcontentloaded",
-                                timeout=NAVIGATION_TIMEOUT_MS,
-                            )
-                            http_status = response.status if response else None
-                            _wait_for_page(page)
+                            with phase_metrics.measure("navigation_wait"):
+                                response = page.goto(
+                                    next_url,
+                                    wait_until="domcontentloaded",
+                                    timeout=NAVIGATION_TIMEOUT_MS,
+                                )
+                                http_status = response.status if response else None
+                                _wait_for_catalog_content(page, performance)
                         else:
                             http_status = None
 
                         _dismiss_overlays(page)
-                        _expand_current_page(page)
+                        with phase_metrics.measure("scroll_expand"):
+                            _expand_current_page(page, performance)
                         last_html = page.content()
                         signature = _product_signature(page)
                         if signature in visited_signatures and page_number > 1:
                             break
                         visited_signatures.add(signature)
 
-                        page_products, page_cards = _parse_html(last_html, section.name)
+                        with phase_metrics.measure("parse"):
+                            page_products, page_cards = _parse_html(last_html, section.name)
                         pages_visited += 1
                         section_pages += 1
                         cards_seen += page_cards
@@ -584,7 +637,7 @@ def _collect_products() -> CollectionBatch:
                             next_url = href
                             continue
                         before = _product_signature(page)
-                        if _click_next_button(page, before):
+                        if _click_next_button(page, before, performance):
                             next_url = None
                             continue
                         break
@@ -616,6 +669,7 @@ def _collect_products() -> CollectionBatch:
                         status=status,
                         error_message=error_message,
                         structural_warning=structural_warning,
+                        performance_ms=phase_metrics.as_dict(),
                     )
                 )
                 print("=" * 46, flush=True)
@@ -626,6 +680,14 @@ def _collect_products() -> CollectionBatch:
                 print(f"Productos únicos.......: {len(section_products)}", flush=True)
                 print(f"Duplicados sección.....: {section_duplicates}", flush=True)
                 print(f"Duración................: {duration_ms / 1000:.1f} s", flush=True)
+                print(
+                    "PERF....................: "
+                    + ", ".join(
+                        f"{name}={value / 1000:.1f}s"
+                        for name, value in phase_metrics.as_dict().items()
+                    ),
+                    flush=True,
+                )
                 print("=" * 46, flush=True)
 
             if not all_products:
@@ -639,6 +701,23 @@ def _collect_products() -> CollectionBatch:
             succeeded = sum(item.status == "success" for item in section_results)
             failed = len(section_results) - succeeded
             warnings = sum(item.structural_warning for item in section_results)
+            aggregate_metrics.add(
+                "collector_total", int((time.monotonic() - collector_started) * 1000)
+            )
+            aggregate_metrics.add("blocked_requests", block_stats.blocked_requests)
+            for section_result in section_results:
+                for phase_name, phase_ms in section_result.performance_ms.items():
+                    aggregate_metrics.add(phase_name, phase_ms)
+            print(
+                "PERF RESUMEN · Líquidos: "
+                + ", ".join(
+                    f"{name}={value / 1000:.1f}s"
+                    if name != "blocked_requests"
+                    else f"{name}={value}"
+                    for name, value in aggregate_metrics.as_dict().items()
+                ),
+                flush=True,
+            )
             products = sorted(all_products.values(), key=lambda product: product.name.casefold())
             print(
                 f"Resumen Líquidos: categorías={len(sections)}, correctas={succeeded}, "
@@ -663,6 +742,7 @@ def _collect_products() -> CollectionBatch:
                     health_score=health_score,
                     structural_warnings=warnings,
                     section_stats=tuple(section_results),
+                    performance_ms=aggregate_metrics.as_dict(),
                 ),
             )
         finally:

@@ -1,2 +1,2 @@
-__version__ = "4.3.0"
-RELEASE_NAME = "Smart Alerts & Railway Cron"
+APP_VERSION = "4.4.1"
+RELEASE_NAME = "Railway Config Fix"

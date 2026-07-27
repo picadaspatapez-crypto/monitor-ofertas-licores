@@ -12,7 +12,6 @@ from playwright.sync_api import (
     Browser,
     BrowserContext,
     Page,
-    TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
@@ -23,16 +22,28 @@ from app.domain import (
     CollectionStats,
     SectionStats,
 )
+from app.performance import (
+    PerformanceSettings,
+    PhaseMetrics,
+    ResourceBlockStats,
+    install_resource_blocking,
+    wait_for_any_selector,
+    wait_for_product_count_growth,
+)
 
 
 BASE_URL = "https://licor3b.cl"
 HOME_URL = f"{BASE_URL}/"
-NAVIGATION_TIMEOUT_MS = 60_000
-PAGE_SETTLE_MS = 4_000
+NAVIGATION_TIMEOUT_MS = 40_000
 MAX_PRODUCT_PAGES_PER_SECTION = 80
 MAX_CAPTCHA_RETRIES = 4
-MAX_SCROLL_ROUNDS = 10
+MAX_SCROLL_ROUNDS = 4
 MAX_CONSECUTIVE_EMPTY_PAGES = 2
+PRODUCT_SELECTOR = (
+    "li.product, .products .product, .product-small, .product-item, "
+    ".wc-block-grid__product, [data-product-id], article.product"
+)
+CATEGORY_SELECTOR = "a[href*='/product-category/']"
 
 
 @dataclass(frozen=True)
@@ -189,67 +200,110 @@ def _parse_html(html: str, section_name: str) -> tuple[dict[str, CollectedProduc
     return products, len(cards)
 
 
-def _create_context(browser: Browser) -> BrowserContext:
-    return browser.new_context(
-        locale="es-CL", timezone_id="America/Santiago", viewport={"width": 1365, "height": 900},
-        user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+def _create_context(
+    browser: Browser,
+    performance: PerformanceSettings,
+    block_stats: ResourceBlockStats,
+) -> BrowserContext:
+    context = browser.new_context(
+        locale="es-CL",
+        timezone_id="America/Santiago",
+        viewport={"width": 1365, "height": 900},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
         extra_http_headers={"Accept-Language": "es-CL,es;q=0.9,en;q=0.7"},
     )
-
+    install_resource_blocking(
+        context,
+        enabled=performance.block_browser_resources,
+        stats=block_stats,
+    )
+    return context
 
 def _is_robot_challenge(page: Page, html: str) -> bool:
     lowered = html.lower()
     return "robot challenge screen" in lowered or "/.well-known/sgcaptcha/" in page.url.lower() or "sgcaptcha" in lowered
 
 
-def _wait_for_page(page: Page) -> None:
-    try:
-        page.wait_for_load_state("networkidle", timeout=20_000)
-    except PlaywrightTimeoutError:
-        pass
-    page.wait_for_timeout(PAGE_SETTLE_MS)
+def _wait_for_catalog_content(
+    page: Page,
+    performance: PerformanceSettings,
+    *,
+    discovery: bool = False,
+) -> bool:
+    selector = CATEGORY_SELECTOR if discovery else PRODUCT_SELECTOR
+    return wait_for_any_selector(
+        page,
+        selector,
+        timeout_ms=performance.product_wait_timeout_ms,
+        settle_ms=performance.quick_settle_ms,
+    )
 
 
-def _scroll_until_stable(page: Page) -> None:
-    previous_height = 0
+def _scroll_until_stable(page: Page, performance: PerformanceSettings) -> None:
+    previous_count = page.locator(PRODUCT_SELECTOR).count()
     stable_rounds = 0
     for _ in range(MAX_SCROLL_ROUNDS):
-        current_height = page.evaluate("document.body.scrollHeight")
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        page.wait_for_timeout(1_000)
-        new_height = page.evaluate("document.body.scrollHeight")
-        stable_rounds = stable_rounds + 1 if new_height == current_height == previous_height else 0
-        previous_height = new_height
-        if stable_rounds >= 2:
+        grew = wait_for_product_count_growth(
+            page,
+            PRODUCT_SELECTOR,
+            previous_count,
+            timeout_ms=min(700, performance.dom_growth_timeout_ms),
+        )
+        current_count = page.locator(PRODUCT_SELECTOR).count()
+        if grew or current_count > previous_count:
+            previous_count = current_count
+            stable_rounds = 0
+        else:
+            stable_rounds += 1
+        if stable_rounds >= 1:
             break
 
-
-def _open_with_captcha_retries(browser: Browser, context: BrowserContext, page: Page, url: str) -> tuple[BrowserContext, Page, str, Optional[int]]:
+def _open_with_captcha_retries(
+    browser: Browser,
+    context: BrowserContext,
+    page: Page,
+    url: str,
+    performance: PerformanceSettings,
+    block_stats: ResourceBlockStats,
+    *,
+    discovery: bool = False,
+) -> tuple[BrowserContext, Page, str, Optional[int]]:
     last_html = ""
     last_status: Optional[int] = None
     for attempt in range(1, MAX_CAPTCHA_RETRIES + 1):
         response = page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
         last_status = response.status if response else None
-        _wait_for_page(page)
+        _wait_for_catalog_content(page, performance, discovery=discovery)
         last_html = page.content()
         if not _is_robot_challenge(page, last_html):
             return context, page, last_html, last_status
         print(f"Licor3B CAPTCHA: intento {attempt}/{MAX_CAPTCHA_RETRIES}, url={page.url}", flush=True)
-        page.wait_for_timeout(4_000)
+        page.wait_for_timeout(min(3_000, performance.dom_growth_timeout_ms))
         if attempt < MAX_CAPTCHA_RETRIES:
             try:
                 context.close()
             except Exception:
                 pass
-            context = _create_context(browser)
+            context = _create_context(browser, performance, block_stats)
             page = context.new_page()
     return context, page, last_html, last_status
 
 
-def _discover_sections(browser: Browser, context: BrowserContext, page: Page) -> tuple[BrowserContext, Page, tuple[CatalogSection, ...], str]:
+def _discover_sections(
+    browser: Browser,
+    context: BrowserContext,
+    page: Page,
+    performance: PerformanceSettings,
+    block_stats: ResourceBlockStats,
+) -> tuple[BrowserContext, Page, tuple[CatalogSection, ...], str]:
     try:
-        context, page, html, _ = _open_with_captcha_retries(browser, context, page, HOME_URL)
+        context, page, html, _ = _open_with_captcha_retries(
+            browser, context, page, HOME_URL, performance, block_stats, discovery=True
+        )
         if not _is_robot_challenge(page, html):
             discovered = _discover_sections_from_html(html)
             if discovered:
@@ -288,12 +342,23 @@ def _collect_products() -> CollectionBatch:
     section_results: list[SectionStats] = []
     last_html = ""
 
+    performance = PerformanceSettings.from_env()
+    collector_started = time.monotonic()
+    aggregate_metrics = PhaseMetrics()
+    block_stats = ResourceBlockStats()
+
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        context = _create_context(browser)
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking"],
+        )
+        context = _create_context(browser, performance, block_stats)
         page = context.new_page()
         try:
-            context, page, sections, discovery_source = _discover_sections(browser, context, page)
+            with aggregate_metrics.measure("discovery"):
+                context, page, sections, discovery_source = _discover_sections(
+                    browser, context, page, performance, block_stats
+                )
             print(
                 f"Licor3B catálogo completo: categorías={len(sections)}, origen={discovery_source} "
                 f"[{', '.join(section.name for section in sections)}]",
@@ -302,6 +367,7 @@ def _collect_products() -> CollectionBatch:
 
             for index, section in enumerate(sections, start=1):
                 started = time.monotonic()
+                phase_metrics = PhaseMetrics()
                 section_products: set[str] = set()
                 section_pages = section_cards = section_duplicates = 0
                 consecutive_empty = 0
@@ -313,12 +379,17 @@ def _collect_products() -> CollectionBatch:
                 try:
                     for page_number in range(1, MAX_PRODUCT_PAGES_PER_SECTION + 1):
                         requested_url = _section_page_url(section, page_number)
-                        context, page, last_html, http_status = _open_with_captcha_retries(browser, context, page, requested_url)
+                        with phase_metrics.measure("navigation_wait"):
+                            context, page, last_html, http_status = _open_with_captcha_retries(
+                                browser, context, page, requested_url, performance, block_stats
+                            )
                         if _is_robot_challenge(page, last_html):
                             raise RuntimeError("CAPTCHA persistente")
-                        _scroll_until_stable(page)
-                        last_html = page.content()
-                        page_products, page_cards = _parse_html(last_html, section.name)
+                        with phase_metrics.measure("scroll_expand"):
+                            _scroll_until_stable(page, performance)
+                        with phase_metrics.measure("parse"):
+                            last_html = page.content()
+                            page_products, page_cards = _parse_html(last_html, section.name)
                         pages_visited += 1
                         section_pages += 1
                         cards_seen += page_cards
@@ -370,6 +441,7 @@ def _collect_products() -> CollectionBatch:
                     unique_products=len(section_products), duplicates_removed=section_duplicates,
                     duration_ms=duration_ms, status=status, error_message=error_message,
                     structural_warning=structural_warning,
+                    performance_ms=phase_metrics.as_dict(),
                 )
                 section_results.append(result)
                 print("=" * 46, flush=True)
@@ -380,6 +452,14 @@ def _collect_products() -> CollectionBatch:
                 print(f"Productos únicos.......: {len(section_products)}", flush=True)
                 print(f"Duplicados sección.....: {section_duplicates}", flush=True)
                 print(f"Duración................: {duration_ms / 1000:.1f} s", flush=True)
+                print(
+                    "PERF....................: "
+                    + ", ".join(
+                        f"{name}={value / 1000:.1f}s"
+                        for name, value in phase_metrics.as_dict().items()
+                    ),
+                    flush=True,
+                )
                 print("=" * 46, flush=True)
 
             if not all_products:
@@ -397,6 +477,23 @@ def _collect_products() -> CollectionBatch:
                 f"productos_únicos={len(all_products)}, salud={health_status}({health_score})",
                 flush=True,
             )
+            aggregate_metrics.add(
+                "collector_total", int((time.monotonic() - collector_started) * 1000)
+            )
+            aggregate_metrics.add("blocked_requests", block_stats.blocked_requests)
+            for section_result in section_results:
+                for phase_name, phase_ms in section_result.performance_ms.items():
+                    aggregate_metrics.add(phase_name, phase_ms)
+            print(
+                "PERF RESUMEN · Licor3B: "
+                + ", ".join(
+                    f"{name}={value / 1000:.1f}s"
+                    if name != "blocked_requests"
+                    else f"{name}={value}"
+                    for name, value in aggregate_metrics.as_dict().items()
+                ),
+                flush=True,
+            )
             products = sorted(all_products.values(), key=lambda product: product.name.casefold())
             return CollectionBatch(
                 products=products,
@@ -408,6 +505,7 @@ def _collect_products() -> CollectionBatch:
                     discovery_source=discovery_source, health_status=health_status,
                     health_score=health_score, structural_warnings=warnings,
                     section_stats=tuple(section_results),
+                    performance_ms=aggregate_metrics.as_dict(),
                 ),
             )
         finally:
