@@ -3,6 +3,13 @@ from app.domain.products import (
     CollectionBatch,
     CollectionStats,
     SavedProduct,
+    SectionStats,
 )
 
-__all__ = ["CollectedProduct", "CollectionBatch", "CollectionStats", "SavedProduct"]
+__all__ = [
+    "CollectedProduct",
+    "CollectionBatch",
+    "CollectionStats",
+    "SavedProduct",
+    "SectionStats",
+]

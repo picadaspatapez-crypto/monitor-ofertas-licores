@@ -8,6 +8,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -150,6 +151,17 @@ class ScrapeRun(Base):
     products_updated: Mapped[int] = mapped_column(Integer, default=0)
     products_failed: Mapped[int] = mapped_column(Integer, default=0)
     price_changes: Mapped[int] = mapped_column(Integer, default=0)
+    sections_discovered: Mapped[int] = mapped_column(Integer, default=0)
+    sections_visited: Mapped[int] = mapped_column(Integer, default=0)
+    sections_succeeded: Mapped[int] = mapped_column(Integer, default=0)
+    sections_failed: Mapped[int] = mapped_column(Integer, default=0)
+    pages_visited: Mapped[int] = mapped_column(Integer, default=0)
+    cards_seen: Mapped[int] = mapped_column(Integer, default=0)
+    duplicates_removed: Mapped[int] = mapped_column(Integer, default=0)
+    structural_warnings: Mapped[int] = mapped_column(Integer, default=0)
+    health_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    health_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    metrics_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

@@ -25,3 +25,15 @@
 - `LICOR3B_CATALOG_MODE=offers` permite volver al comportamiento anterior.
 - `LICOR3B_SECTIONS` permite ejecutar categorías específicas para diagnóstico.
 - Se corrigió la renovación real del contexto de Playwright durante reintentos CAPTCHA.
+
+## v3.0 — Licor3B final
+
+- Descubrimiento automático de categorías con fallback seguro.
+- Eliminación del modo configurable: siempre se recorre el catálogo completo.
+- Aislamiento de errores por categoría.
+- Resumen y duración por categoría.
+- Detección de cambios estructurales.
+- Deduplicación global y categorías de origen en el dominio.
+- Collector Health Score.
+- Persistencia de observabilidad mediante Alembic 0003.
+- Resumen de salud y categorías en Telegram.

@@ -14,6 +14,22 @@ class CollectedProduct:
     current_price: int
     regular_price: Optional[int]
     discount_pct: float
+    source_sections: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SectionStats:
+    key: str
+    name: str
+    url: str
+    pages_visited: int = 0
+    cards_seen: int = 0
+    unique_products: int = 0
+    duplicates_removed: int = 0
+    duration_ms: int = 0
+    status: str = "success"
+    error_message: str | None = None
+    structural_warning: bool = False
 
 
 @dataclass(frozen=True)
@@ -21,7 +37,16 @@ class CollectionStats:
     pages_visited: int = 0
     cards_seen: int = 0
     unique_products: int = 0
+    sections_discovered: int = 0
     sections_visited: int = 0
+    sections_succeeded: int = 0
+    sections_failed: int = 0
+    duplicates_removed: int = 0
+    discovery_source: str = "unknown"
+    health_status: str = "UNKNOWN"
+    health_score: int = 0
+    structural_warnings: int = 0
+    section_stats: tuple[SectionStats, ...] = ()
 
 
 @dataclass(frozen=True)

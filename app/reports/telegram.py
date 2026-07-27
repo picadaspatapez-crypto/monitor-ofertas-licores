@@ -46,13 +46,22 @@ def build_telegram_messages(
     *, store_name: str, items: list[SavedProduct], analysis: CatalogAnalysis
 ) -> list[str]:
     stats = analysis.collection_stats
+    health_icon = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}.get(
+        stats.health_status, "⚪"
+    )
     summary = [
         f"📊 Ejecución completada: {store_name}",
         "",
+        f"{health_icon} Salud: {stats.health_status} ({stats.health_score}/100)",
         f"⏱ Duración: {duration_text(analysis.duration_ms)}",
         f"🗂 Secciones: {stats.sections_visited}",
+        f"🧭 Categorías descubiertas: {stats.sections_discovered}",
+        f"✅ Categorías correctas: {stats.sections_succeeded}",
+        f"❌ Categorías fallidas: {stats.sections_failed}",
+        f"⚠️ Alertas estructurales: {stats.structural_warnings}",
         f"📄 Páginas: {stats.pages_visited}",
         f"🧾 Tarjetas procesadas: {stats.cards_seen}",
+        f"♻️ Duplicados eliminados: {stats.duplicates_removed}",
         f"📦 Productos encontrados: {analysis.total}",
         f"🆕 Nuevos: {analysis.new_products}",
         f"🔄 Actualizados: {analysis.total - analysis.new_products}",
@@ -63,6 +72,30 @@ def build_telegram_messages(
         f"🏷️ Con descuento informado: {analysis.reported_discounts}",
     ]
     messages = ["\n".join(summary)]
+
+    if stats.section_stats:
+        lines = ["🗂 Resumen por categoría", ""]
+        for section in stats.section_stats:
+            icon = "✅" if section.status == "success" else "❌"
+            warning = " ⚠️" if section.structural_warning else ""
+            lines.append(
+                f"{icon} {section.name}: {section.unique_products} productos, "
+                f"{section.pages_visited} páginas, {duration_text(section.duration_ms)}{warning}"
+            )
+        messages.append("\n".join(lines))
+
+    problems = [
+        section for section in stats.section_stats
+        if section.status != "success" or section.structural_warning
+    ]
+    if problems:
+        lines = ["⚠️ Incidencias del collector", ""]
+        for section in problems:
+            if section.status != "success":
+                lines.append(f"• {section.name}: {section.error_message or 'error desconocido'}")
+            elif section.structural_warning:
+                lines.append(f"• {section.name}: HTTP correcto, pero 0 tarjetas en la primera página.")
+        messages.append("\n".join(lines))
 
     drops = sorted(
         (item for item in items if item.price_dropped),
