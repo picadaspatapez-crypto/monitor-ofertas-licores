@@ -13,3 +13,6 @@
 | v4.8 | Favoritos y alertas personalizadas |
 | v4.9 | API interna y mínimo histórico |
 | v5.0 | Dashboard web inicial |
+
+
+Estado actual: **v4.7.0**, bot interactivo de Telegram completado.

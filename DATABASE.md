@@ -853,3 +853,15 @@ representar tanto cambios de productos como eventos generales de una tienda.
 La reserva se crea antes de llamar a Telegram. Un evento ya enviado no vuelve a
 reservarse. Los eventos fallidos pueden reintentarse y una reserva pendiente
 abandonada se libera después de 30 minutos.
+
+## v4.7 · telegram_bot_state
+
+Tabla pequeña de clave/valor usada por el bot interactivo para conservar el
+siguiente `update_id` de Telegram. Evita reprocesar mensajes después de un
+reinicio o redeploy del servicio `buscador-licores`.
+
+| Campo | Uso |
+|---|---|
+| `key` | Identificador del estado, actualmente `telegram_search_next_update_id` |
+| `value` | Próximo ID de actualización que debe solicitarse |
+| `updated_at` | Fecha de actualización del offset |

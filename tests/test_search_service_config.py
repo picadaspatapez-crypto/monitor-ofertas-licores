@@ -18,4 +18,4 @@ def test_search_entrypoint_runs_migrations_and_web_server():
     text = path.read_text(encoding="utf-8")
     assert "alembic upgrade head" in text
     assert "python -m app.search.reindex" in text
-    assert "python -m app.search.web" in text
+    assert "python -m app.search.service" in text

@@ -1,5 +1,17 @@
 # Changelog
 
+## v4.7.0 — Interactive Telegram Search Bot
+
+- Bot de Telegram integrado al servicio web de búsqueda existente.
+- Búsqueda con `/buscar` y mensajes de texto normales.
+- Comandos `/estado` y `/ayuda`.
+- Resultados comparativos con botones directos a las tiendas.
+- Lista privada de chats autorizados.
+- Long polling sin webhook y con reintentos controlados.
+- Persistencia del offset de Telegram mediante `0006_telegram_bot_state`.
+- Web y bot ejecutándose juntos sin crear un tercer servicio Railway.
+- El bot puede deshabilitarse sin afectar el buscador web.
+
 ## v4.6.0 — Unified Catalog & Search Engine
 
 - Campos de catálogo para variante, cantidad, alias y texto de búsqueda.

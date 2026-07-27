@@ -73,3 +73,18 @@ huella incorpora posición, producto, precio actual, precio regular y descuento.
 
 Una ejecución sana sin cambios relevantes se conserva en `scrape_runs` y
 `price_observations`, pero no genera mensajes.
+
+## v4.7 · Servicio interactivo
+
+`buscador-licores` ejecuta dos componentes dentro del mismo contenedor:
+
+```text
+SearchServer (HTTP /buscar y /api/search)
+TelegramSearchBot (long polling getUpdates)
+                ↓
+          PostgreSQL compartido
+```
+
+El web server mantiene el healthcheck de Railway. El worker de Telegram se
+ejecuta en un hilo independiente, restringe los chats autorizados y persiste su
+offset en `telegram_bot_state`.
