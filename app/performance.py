@@ -154,7 +154,7 @@ def wait_for_product_count_growth(
     try:
         page.wait_for_function(
             "([selector, previous]) => document.querySelectorAll(selector).length > previous",
-            [selector, previous_count],
+            arg=[selector, previous_count],
             timeout=timeout_ms,
         )
         return True
@@ -173,7 +173,7 @@ def wait_for_signature_change(
         page.wait_for_function(
             "([selector, previous]) => Array.from(document.querySelectorAll(selector))"
             ".map(el => el.href || '').filter(Boolean).sort().join('|') !== previous",
-            [selector, previous_signature],
+            arg=[selector, previous_signature],
             timeout=timeout_ms,
         )
         return True
