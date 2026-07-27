@@ -1,17 +1,15 @@
 # Camino controlado de v4.0 a v5.0
 
-El proyecto avanzará en un máximo de 11 entregas implementables.
-
 | Versión | Entrega |
 |---|---|
 | v4.0 | Base multi-tienda y registry — completada |
 | v4.1 | Collector funcional de Líquidos — completada |
-| v4.2 | Ranking de mejores precios, sin techo y 30 productos — completada |
-| v4.3 | Periodicidad, resumen inteligente y control de alertas repetidas — completada |
-| v4.4 | Normalización estructurada de marca, volumen y pack |
-| v4.5 | Candidatos de matching entre tiendas |
-| v4.6 | Confidence score y revisión de falsos positivos |
-| v4.7 | Comparador de precios para matches seguros |
-| v4.8 | Alertas Telegram de oportunidades multi-tienda |
-| v4.9 | Precio mínimo histórico y API interna de consulta |
+| v4.2 | Ranking sin techo y 30 productos — completada |
+| v4.3 | Cron y alertas inteligentes — completada |
+| v4.4 | Performance y dos collectors en paralelo — completada |
+| v4.5 | Matching conservador y comparador de precios — completada |
+| v4.6 | Catálogo consultable y motor de búsqueda |
+| v4.7 | Bot interactivo de Telegram |
+| v4.8 | Favoritos y alertas personalizadas |
+| v4.9 | API interna y mínimo histórico |
 | v5.0 | Dashboard web inicial |

@@ -1,3 +1,8 @@
+from app.reports.comparison import (
+    build_comparison_ranking_messages,
+    build_comparison_summary_message,
+    build_winner_changes_message,
+)
 from app.reports.telegram import (
     build_category_summary_message,
     build_incident_message,
@@ -13,6 +18,9 @@ from app.reports.telegram import (
 
 __all__ = [
     "build_telegram_messages",
+    "build_comparison_summary_message",
+    "build_comparison_ranking_messages",
+    "build_winner_changes_message",
     "build_summary_message",
     "build_smart_summary_message",
     "build_category_summary_message",

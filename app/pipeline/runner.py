@@ -5,13 +5,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 
-from app.analyzers import analyze_catalog
+from app.analyzers import analyze_catalog, analyze_cross_store_prices
 from app.collectors.base import Collector
 from app.collectors.registry import enabled_collectors
 from app.config import Settings
 from app.database import Base, create_database
 from app.models import ScrapeRun, Store
-from app.notifications import SmartAlertContext, build_smart_notification_bundles
+from app.notifications import (
+    ComparisonAlertContext,
+    SmartAlertContext,
+    build_comparison_notification_bundles,
+    build_smart_notification_bundles,
+)
 from app.performance import PerformanceSettings
 from app.repositories import (
     count_missing_products,
@@ -20,6 +25,7 @@ from app.repositories import (
     latest_sent_alert,
     previous_health_status,
     previous_successful_product_count,
+    reconcile_cross_store_matches,
     save_product,
     start_scrape_run,
 )
@@ -39,6 +45,8 @@ class CollectorExecution:
     duration_ms: int
     products_found: int = 0
     error_message: str | None = None
+    store_id: int | None = None
+    run_id: int | None = None
 
 
 def _metrics_dict(stats, previous_count: int | None) -> dict:
@@ -368,6 +376,8 @@ def _run_collector(
             success=True,
             duration_ms=total_ms,
             products_found=len(collected),
+            store_id=store_id,
+            run_id=run_id,
         )
 
     except Exception as exc:
@@ -397,8 +407,107 @@ def _run_collector(
             success=False,
             duration_ms=total_ms,
             error_message=f"{type(exc).__name__}: {exc}"[:1000],
+            store_id=store_id,
+            run_id=run_id,
         )
 
+
+
+def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[CollectorExecution]) -> None:
+    successful = [
+        result
+        for result in results
+        if result.success
+        and result.run_id is not None
+        and result.store_id is not None
+        and result.products_found > 0
+    ]
+    if len(successful) < 2:
+        print(
+            "Comparador multi-tienda: omitido; se requieren al menos dos collectors correctos con productos.",
+            flush=True,
+        )
+        return
+
+    run_ids = sorted(int(result.run_id) for result in successful if result.run_id is not None)
+    stage_started = time.monotonic()
+    try:
+        with SessionLocal() as session:
+            matching = reconcile_cross_store_matches(
+                session,
+                run_ids=run_ids,
+                minimum_confidence=settings.cross_store_match_min_confidence,
+            )
+            session.flush()
+            comparison = analyze_cross_store_prices(
+                session,
+                run_ids=run_ids,
+                minimum_confidence=settings.cross_store_match_min_confidence,
+            )
+            session.commit()
+
+        print("=" * 64, flush=True)
+        print("MATCHING Y COMPARACIÓN ENTRE TIENDAS", flush=True)
+        print(f"Productos actuales........: {matching.total_products}", flush=True)
+        print(f"Elegibles.................: {matching.eligible_products}", flush=True)
+        print(f"Packs excluidos...........: {matching.skipped_packs}", flush=True)
+        print(f"Volumen desconocido.......: {matching.skipped_unknown_volume}", flush=True)
+        print(f"Pares evaluados...........: {matching.candidate_pairs}", flush=True)
+        print(f"Pares ambiguos............: {matching.ambiguous_products}", flush=True)
+        print(f"Matches aceptados.........: {matching.matched_pairs}", flush=True)
+        print(f"Matches exactos...........: {matching.exact_matches}", flush=True)
+        print(f"Matches difusos...........: {matching.fuzzy_matches}", flush=True)
+        print(f"Productos reagrupados.....: {matching.products_relinked}", flush=True)
+        print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
+        print(f"Equivalencias verificadas.: {comparison.verified_matches}", flush=True)
+        print(f"Oportunidades de precio...: {len(comparison.opportunities)}", flush=True)
+        print(f"Cambios de ganador........: {len(comparison.winner_changes)}", flush=True)
+        print(f"Empates...................: {comparison.ties}", flush=True)
+        print(f"Grupos no verificados.....: {comparison.unverified_groups}", flush=True)
+        print("=" * 64, flush=True)
+
+        with SessionLocal() as session:
+            last_digest = latest_sent_alert(
+                session,
+                store_id=None,
+                alert_type="cross_store_digest",
+            )
+            if last_digest is not None:
+                session.expunge(last_digest)
+
+        bundles = build_comparison_notification_bundles(
+            analysis=comparison,
+            context=ComparisonAlertContext(
+                run_ids=tuple(run_ids),
+                digest_interval_hours=settings.telegram_digest_interval_hours,
+                report_limit=settings.telegram_comparison_limit,
+                winner_change_limit=settings.telegram_winner_change_limit,
+                last_digest_alert=last_digest,
+            ),
+        )
+        if bundles:
+            sent, skipped, failed = deliver_notification_bundles(
+                SessionLocal=SessionLocal,
+                bundles=bundles,
+                telegram_bot_token=settings.telegram_bot_token,
+                telegram_chat_id=settings.telegram_chat_id,
+                send_message_fn=send_message,
+            )
+            print(
+                f"Telegram comparador: bundles enviados={sent}, omitidos={skipped}, fallidos={failed}.",
+                flush=True,
+            )
+        else:
+            print("Telegram comparador: ranking sin cambios; 0 mensajes.", flush=True)
+
+        elapsed_ms = int((time.monotonic() - stage_started) * 1000)
+        print(f"✓ Etapa cross-store completada en {elapsed_ms / 1000:.1f}s.", flush=True)
+    except Exception as exc:
+        print(
+            f"✖ Etapa cross-store omitida por error: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 def run_pipeline() -> int:
     settings = Settings.from_env()
@@ -425,6 +534,12 @@ def run_pipeline() -> int:
         f"≥ ${settings.alert_min_drop_amount:,}; "
         f"digest cada {settings.telegram_digest_interval_hours} h."
         .replace(",", "."),
+        flush=True,
+    )
+    print(
+        "Comparador cross-store: "
+        f"confianza ≥ {settings.cross_store_match_min_confidence:.0%}; "
+        f"top={settings.telegram_comparison_limit}; packs excluidos.",
         flush=True,
     )
 
@@ -462,6 +577,8 @@ def run_pipeline() -> int:
                     file=sys.stderr,
                     flush=True,
                 )
+
+    _run_cross_store_stage(SessionLocal=SessionLocal, settings=settings, results=results)
 
     total_collectors = len(collectors)
     failures = sum(not result.success for result in results)

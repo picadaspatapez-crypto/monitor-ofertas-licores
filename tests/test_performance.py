@@ -68,3 +68,38 @@ def test_performance_dict_defaults_are_not_shared():
     collection_a.performance_ms["collect"] = 2
     assert section_b.performance_ms == {}
     assert collection_b.performance_ms == {}
+
+class _KeywordOnlyWaitPage:
+    """Replica la firma Python de Playwright: arg es keyword-only."""
+
+    def __init__(self):
+        self.calls = []
+
+    def wait_for_function(self, expression, *, arg=None, timeout=None, polling=None):
+        self.calls.append(
+            {
+                "expression": expression,
+                "arg": arg,
+                "timeout": timeout,
+                "polling": polling,
+            }
+        )
+        return object()
+
+
+def test_wait_for_product_count_growth_passes_arg_as_keyword():
+    from app.performance import wait_for_product_count_growth
+
+    page = _KeywordOnlyWaitPage()
+    assert wait_for_product_count_growth(page, ".product", 12, timeout_ms=4_500)
+    assert page.calls[0]["arg"] == [".product", 12]
+    assert page.calls[0]["timeout"] == 4_500
+
+
+def test_wait_for_signature_change_passes_arg_as_keyword():
+    from app.performance import wait_for_signature_change
+
+    page = _KeywordOnlyWaitPage()
+    assert wait_for_signature_change(page, "a[href]", "old", timeout_ms=4_500)
+    assert page.calls[0]["arg"] == ["a[href]", "old"]
+    assert page.calls[0]["timeout"] == 4_500

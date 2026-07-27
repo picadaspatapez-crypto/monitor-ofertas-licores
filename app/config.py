@@ -61,6 +61,9 @@ class Settings:
     alert_price_increases: bool
     telegram_change_limit: int
     telegram_report_limit: int
+    cross_store_match_min_confidence: float
+    telegram_comparison_limit: int
+    telegram_winner_change_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -81,4 +84,13 @@ class Settings:
             alert_price_increases=_bool_env("ALERT_PRICE_INCREASES", False),
             telegram_change_limit=_positive_int("TELEGRAM_CHANGE_LIMIT", 10),
             telegram_report_limit=_positive_int("TELEGRAM_REPORT_LIMIT", 30),
+            cross_store_match_min_confidence=_percentage(
+                "CROSS_STORE_MATCH_MIN_CONFIDENCE_PERCENT", 86.0
+            ),
+            telegram_comparison_limit=_positive_int(
+                "TELEGRAM_COMPARISON_LIMIT", 20
+            ),
+            telegram_winner_change_limit=_positive_int(
+                "TELEGRAM_WINNER_CHANGE_LIMIT", 10
+            ),
         )

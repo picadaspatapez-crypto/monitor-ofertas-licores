@@ -22,7 +22,7 @@ from app.reports.telegram import (
 
 @dataclass(frozen=True)
 class SmartAlertContext:
-    store_id: int
+    store_id: int | None
     run_id: int
     store_name: str
     previous_health_status: str | None
@@ -41,7 +41,7 @@ class SmartAlertContext:
 
 @dataclass(frozen=True)
 class NotificationBundle:
-    store_id: int
+    store_id: int | None
     run_id: int | None
     alert_type: str
     deduplication_key: str

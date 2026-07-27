@@ -16,7 +16,7 @@ RETRY_PENDING_AFTER = timedelta(minutes=30)
 def latest_sent_alert(
     session: Session,
     *,
-    store_id: int,
+    store_id: int | None,
     alert_type: str,
 ) -> Alert | None:
     return session.scalar(
@@ -34,7 +34,7 @@ def latest_sent_alert(
 def reserve_alert(
     session: Session,
     *,
-    store_id: int,
+    store_id: int | None,
     scrape_run_id: int | None,
     product_id: int | None,
     alert_type: str,
