@@ -1,5 +1,5 @@
 """Application release metadata."""
 
-APP_VERSION = "4.5.0"
+APP_VERSION = "4.6.0"
 __version__ = APP_VERSION
-RELEASE_NAME = "Cross-store Matching & Price Comparator"
+RELEASE_NAME = "Unified Catalog & Search Engine"

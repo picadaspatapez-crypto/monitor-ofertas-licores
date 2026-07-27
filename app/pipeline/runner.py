@@ -34,6 +34,7 @@ from app.services import (
     failure_notification_bundle,
     send_message,
 )
+from app.search.catalog import refresh_search_catalog
 from app.version import RELEASE_NAME, __version__
 
 
@@ -509,6 +510,30 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             flush=True,
         )
 
+
+def _refresh_search_catalog_stage(*, SessionLocal) -> None:
+    started = time.monotonic()
+    try:
+        with SessionLocal() as session:
+            summary = refresh_search_catalog(session)
+            session.commit()
+        duration_ms = int((time.monotonic() - started) * 1000)
+        print(
+            "ÍNDICE DE BÚSQUEDA · "
+            f"maestros={summary.masters_seen}, "
+            f"actualizados={summary.masters_updated}, "
+            f"alias={summary.aliases_indexed}, "
+            f"duración={duration_ms / 1000:.1f}s.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"⚠ No se pudo actualizar el índice de búsqueda: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def run_pipeline() -> int:
     settings = Settings.from_env()
     performance = PerformanceSettings.from_env()
@@ -579,6 +604,7 @@ def run_pipeline() -> int:
                 )
 
     _run_cross_store_stage(SessionLocal=SessionLocal, settings=settings, results=results)
+    _refresh_search_catalog_stage(SessionLocal=SessionLocal)
 
     total_collectors = len(collectors)
     failures = sum(not result.success for result in results)

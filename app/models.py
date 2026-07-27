@@ -58,6 +58,10 @@ class MasterProduct(Base):
     volume_ml: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     ean: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
+    variant: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    package_quantity: Mapped[int] = mapped_column(Integer, default=1)
+    aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    search_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
