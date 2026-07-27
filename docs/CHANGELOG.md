@@ -1,3 +1,17 @@
+# v4.4.1 — Railway Config Fix
+
+- Corrige el archivo raíz `railway.toml`.
+- Añade validación automática de sintaxis y campos de despliegue.
+- No cambia el comportamiento de scraping de v4.4.
+
+# v4.4.0 — Performance Engine
+
+- Dos collectors en paralelo.
+- Bloqueo selectivo de imágenes, fuentes, multimedia y trackers.
+- Esperas por contenido y crecimiento del DOM.
+- Métricas de discovery, navegación, expansión, parseo y persistencia.
+- Sin migraciones nuevas.
+
 # Changelog
 
 ## v4.3.0 — Smart Alerts & Railway Cron

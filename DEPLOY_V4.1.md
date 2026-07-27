@@ -1,104 +1,47 @@
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+# Deploy v4.1.0 — Líquidos Collector
 
-from app.database import Base
-from app.models import Alert, ScrapeRun, Store
-from app.notifications import NotificationBundle
-from app.services import deliver_notification_bundles
+Esta versión activa el segundo collector del sistema: **Líquidos.cl**.
 
+## Instalación
 
-def _database():
-    engine = create_engine("sqlite+pysqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-    with SessionLocal() as session:
-        store = Store(
-            name="Test",
-            slug="test",
-            base_url="https://example.com",
-            connector_key="test",
-        )
-        session.add(store)
-        session.flush()
-        run = ScrapeRun(store_id=store.id, status="success")
-        session.add(run)
-        session.commit()
-        return SessionLocal, store.id, run.id
+1. Reemplaza el contenido del repositorio por el contenido de este ZIP.
+2. No cambies las variables existentes en Railway.
+3. Commit sugerido:
 
+```text
+Release v4.1 Líquidos collector
+```
 
-def _bundle(store_id: int, run_id: int) -> NotificationBundle:
-    return NotificationBundle(
-        store_id=store_id,
-        run_id=run_id,
-        alert_type="ranking_digest",
-        deduplication_key=f"ranking-digest:{store_id}:{run_id}:abc",
-        payload_hash="abc",
-        reason="test",
-        messages=("uno", "dos"),
-    )
+4. Ejecuta **Deploy Latest Commit**.
 
+## Qué deberías ver
 
-def test_delivery_marks_bundle_sent_and_skips_duplicate():
-    SessionLocal, store_id, run_id = _database()
-    sent_messages = []
+```text
+Monitor de Licores v4.1.0 · Líquidos Collector
+Collectors habilitados: licor3b, liquidos
+```
 
-    def fake_send(token, chat, message):
-        sent_messages.append((token, chat, message))
+Después de Licor3B comenzará:
 
-    result = deliver_notification_bundles(
-        SessionLocal=SessionLocal,
-        bundles=[_bundle(store_id, run_id)],
-        telegram_bot_token="token",
-        telegram_chat_id="chat",
-        send_message_fn=fake_send,
-    )
-    assert result == (1, 0, 0)
-    assert [item[2] for item in sent_messages] == ["uno", "dos"]
+```text
+Líquidos catálogo: categorías=...
+Líquidos categoría 1/...: Packs
+```
 
-    duplicate = deliver_notification_bundles(
-        SessionLocal=SessionLocal,
-        bundles=[_bundle(store_id, run_id)],
-        telegram_bot_token="token",
-        telegram_chat_id="chat",
-        send_message_fn=fake_send,
-    )
-    assert duplicate == (0, 1, 0)
+Al terminar aparecerá un resumen separado para cada tienda y un resumen global.
 
-    with SessionLocal() as session:
-        alert = session.scalar(select(Alert))
-        assert alert.status == "sent"
-        assert alert.sent_at is not None
+## Sin cambios de base de datos
 
+No hay migraciones nuevas. La tabla `stores` registrará Líquidos automáticamente
+mediante la infraestructura multi-tienda de v4.0.
 
-def test_failed_delivery_is_recorded_and_can_retry():
-    SessionLocal, store_id, run_id = _database()
-    attempts = 0
+## Comportamiento del collector
 
-    def failing_send(token, chat, message):
-        nonlocal attempts
-        attempts += 1
-        raise RuntimeError("telegram down")
-
-    first = deliver_notification_bundles(
-        SessionLocal=SessionLocal,
-        bundles=[_bundle(store_id, run_id)],
-        telegram_bot_token="token",
-        telegram_chat_id="chat",
-        send_message_fn=failing_send,
-    )
-    assert first == (0, 0, 1)
-
-    delivered = []
-
-    def working_send(token, chat, message):
-        delivered.append(message)
-
-    retry = deliver_notification_bundles(
-        SessionLocal=SessionLocal,
-        bundles=[_bundle(store_id, run_id)],
-        telegram_bot_token="token",
-        telegram_chat_id="chat",
-        send_message_fn=working_send,
-    )
-    assert retry == (1, 0, 0)
-    assert delivered == ["uno", "dos"]
+- Descubre las categorías raíz desde el menú.
+- Usa una lista segura de respaldo si el menú no puede leerse.
+- Fuerza modalidad de despacho web programado.
+- Soporta carga infinita, botones «Cargar más» y paginación «Siguiente».
+- Deduplica productos por URL canónica.
+- Excluye el precio por litro al interpretar precios.
+- Continúa aunque falle una categoría.
+- Registra métricas de salud y reportes Telegram independientes.
