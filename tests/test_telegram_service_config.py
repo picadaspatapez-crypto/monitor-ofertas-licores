@@ -20,3 +20,12 @@ def test_telegram_state_migration_follows_search_catalog():
     ).read_text(encoding="utf-8")
     assert 'revision = "0006_telegram_bot_state"' in migration
     assert 'down_revision = "0005_search_catalog"' in migration
+
+
+def test_favorites_migration_follows_telegram_state():
+    root = Path(__file__).resolve().parents[1]
+    migration = (
+        root / "alembic/versions/0007_telegram_favorites.py"
+    ).read_text(encoding="utf-8")
+    assert 'revision = "0007_telegram_favorites"' in migration
+    assert 'down_revision = "0006_telegram_bot_state"' in migration

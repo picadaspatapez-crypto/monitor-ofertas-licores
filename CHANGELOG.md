@@ -44,3 +44,14 @@
 
 - Corrige el uso keyword-only de `arg` en `Page.wait_for_function`.
 - Mantiene la recolección paralela y las esperas adaptativas.
+
+## v4.8.0 — Favorites & Personalized Alerts
+
+- Favoritos persistentes por chat autorizado.
+- Precio objetivo mediante `/avisar producto bajo precio`.
+- Administración con `/misfavoritos` y `/eliminarfavorito`.
+- Detección de baja, nueva tienda, cambio de ganador y reposición.
+- Mensajes combinados para evitar múltiples avisos del mismo producto.
+- Cola `favorite_alerts` con reintentos y estado de entrega.
+- Evaluación protegida por cobertura completa y collectors `HEALTHY`.
+- Migración `0007_telegram_favorites`.

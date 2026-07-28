@@ -865,3 +865,42 @@ reinicio o redeploy del servicio `buscador-licores`.
 | `key` | Identificador del estado, actualmente `telegram_search_next_update_id` |
 | `value` | Próximo ID de actualización que debe solicitarse |
 | `updated_at` | Fecha de actualización del offset |
+
+---
+
+# Estado implementado en v4.8
+
+## telegram_favorites
+
+Guarda los productos seguidos por cada chat autorizado y su estado de comparación.
+
+| Campo | Uso |
+|---|---|
+| `chat_id` | Chat propietario del favorito |
+| `master_product_id` | Producto unificado seguido |
+| `target_price` | Precio objetivo opcional en CLP |
+| `notify_on_*` | Tipos de cambio habilitados |
+| `last_best_price` | Mejor precio de la evaluación anterior |
+| `last_winner_store` | Tienda ganadora anterior |
+| `last_store_names` | Tiendas en las que aparecía |
+| `was_available` | Disponibilidad anterior inferida |
+| `is_active` | Permite desactivar sin borrar historial |
+
+La combinación `chat_id + master_product_id` es única.
+
+## favorite_alerts
+
+Cola persistente de notificaciones personalizadas. Combina en un solo mensaje
+los eventos detectados para un favorito durante una revisión.
+
+| Campo | Uso |
+|---|---|
+| `favorite_id` | Favorito que originó el aviso |
+| `chat_id` | Destinatario de Telegram |
+| `event_types` | Baja, objetivo, tienda nueva, ganador o reposición |
+| `run_ids` | Ejecuciones de tiendas utilizadas |
+| `deduplication_key` | Impide reenviar el mismo evento |
+| `status` | `pending`, `sent` o `failed` |
+| `message` | Texto persistido para envío o reintento |
+| `current_price` | Mejor precio detectado |
+| `winner_store` | Tienda más barata actual |

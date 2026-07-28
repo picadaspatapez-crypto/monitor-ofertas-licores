@@ -1,73 +1,56 @@
-# Monitor de Ofertas de Licores — v4.7.0
+# Monitor de Ofertas de Licores — v4.8.0
 
-Plataforma multi-tienda para **Licor3B** y **Líquidos.cl**. Recolecta los
-catálogos en paralelo, conserva historial en PostgreSQL, compara productos
-equivalentes y permite consultar el último precio desde la web o directamente
-en Telegram.
+Plataforma multi-tienda para **Licor3B** y **Líquidos.cl**. Recolecta catálogos
+en paralelo, conserva historial en PostgreSQL, compara productos equivalentes y
+permite buscar o seguir productos desde Telegram.
 
-## Novedades de v4.7
+## Novedades de v4.8
 
-- Bot interactivo de Telegram conectado al catálogo unificado.
-- Búsqueda mediante `/buscar johnnie black 750` o escribiendo el producto sin comando.
-- Respuestas con mejor precio, ahorro, tienda, confianza y botones de compra.
-- Comandos `/buscar`, `/estado` y `/ayuda` registrados automáticamente.
-- Acceso privado por `TELEGRAM_CHAT_ID` o `TELEGRAM_ALLOWED_CHAT_IDS`.
-- Long polling integrado al servicio `buscador-licores`; no requiere webhook.
-- Offset de Telegram persistido en PostgreSQL para evitar responder dos veces tras reinicios.
-- Migración Alembic `0006_telegram_bot_state`.
-- El buscador web privado de la v4.6 continúa disponible.
+- Favoritos privados por chat autorizado.
+- Comando `/favorito` para seguir un producto.
+- Comando `/avisar ... bajo ...` para definir un precio objetivo en CLP.
+- Comandos `/misfavoritos` y `/eliminarfavorito ID`.
+- Avisos por baja de precio, objetivo alcanzado, tienda nueva, cambio de ganador
+  y reposición.
+- Una sola notificación combina todos los eventos del mismo producto y revisión.
+- Cola persistente de alertas con estados `pending`, `sent` y `failed`.
+- Evaluación únicamente cuando todos los collectors terminan `HEALTHY`.
+- Migración Alembic `0007_telegram_favorites`.
+- Sin servicios Railway ni variables obligatorias adicionales.
 
-## Arquitectura de despliegue
-
-La misma base de código sigue usando solamente **dos servicios Railway**:
-
-```text
-Servicio 1 · Scraper cron
-Cada 6 horas
-Licor3B + Líquidos → PostgreSQL
-
-Servicio 2 · Buscador interactivo
-Siempre activo
-Web + Telegram → PostgreSQL
-```
-
-No debes crear un tercer servicio para el bot. La v4.7 amplía el servicio
-`buscador-licores` existente.
-
-## Variables del servicio `buscador-licores`
-
-```env
-DATABASE_URL=<referencia al mismo PostgreSQL>
-SEARCH_ACCESS_TOKEN=<clave privada larga>
-TELEGRAM_BOT_TOKEN=<el mismo token usado por el scraper>
-TELEGRAM_CHAT_ID=<el mismo chat autorizado usado por el scraper>
-```
-
-Opcionalmente, para autorizar varios chats:
-
-```env
-TELEGRAM_ALLOWED_CHAT_IDS=123456789,-1001234567890
-```
-
-Cuando `TELEGRAM_ALLOWED_CHAT_IDS` está presente reemplaza el valor individual
-de `TELEGRAM_CHAT_ID` para el bot interactivo.
-
-## Uso en Telegram
+## Arquitectura
 
 ```text
-/start
+monitor-ofertas-licores (cron cada 6 horas)
+  ├─ Licor3B + Líquidos
+  ├─ matching y comparación
+  ├─ actualiza catálogo
+  └─ evalúa y envía alertas de favoritos
+
+PostgreSQL
+  ├─ catálogo e historial
+  ├─ favoritos por chat
+  └─ cola de alertas personalizadas
+
+buscador-licores (siempre online)
+  ├─ buscador web
+  └─ bot Telegram
+```
+
+## Comandos Telegram
+
+```text
 /buscar johnnie black 750
+/favorito johnnie black 750
+/avisar johnnie black 750 bajo 25000
+/misfavoritos
+/eliminarfavorito 3
 /estado
+/ayuda
 ```
 
-También puedes escribir directamente:
-
-```text
-jack honey
-```
-
-El bot consulta PostgreSQL y no abre las tiendas al recibir cada mensaje.
+También se puede buscar escribiendo un producto sin comando.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V4.7.md`](DEPLOY_V4.7.md).
+Consulta [`DEPLOY_V4.8.md`](DEPLOY_V4.8.md).
