@@ -385,15 +385,39 @@ def _merge(existing: CollectedProduct | None, incoming: CollectedProduct) -> Col
 
 
 def _health(section_stats: list[SectionStats], product_count: int) -> tuple[str, int]:
+    """Classify a capture without discarding a useful partial Shopify catalog.
+
+    El Mundo del Vino can rate-limit one or two collections after several
+    successful feeds. A partial section that already returned products is not
+    equivalent to a completely failed section, so it receives a smaller
+    penalty and remains persistable as DEGRADED when absolute coverage is
+    plausible.
+    """
     if product_count < MIN_PLAUSIBLE_PRODUCTS:
         return "BROKEN", 20 if product_count else 0
-    failed = sum(item.status != "success" for item in section_stats)
-    warnings = sum(item.structural_warning for item in section_stats)
-    score = max(0, min(100, 100 - failed * 12 - warnings * 8))
-    if failed == 0 and warnings == 0:
+
+    succeeded = sum(item.status == "success" for item in section_stats)
+    partial = sum(item.status == "partial" for item in section_stats)
+    failed = sum(item.status == "failed" for item in section_stats)
+    warning_only = sum(
+        item.structural_warning and item.status == "success" for item in section_stats
+    )
+
+    score = max(
+        0,
+        min(
+            100,
+            100 - partial * 8 - failed * 18 - warning_only * 5,
+        ),
+    )
+
+    if failed == 0 and partial == 0 and warning_only == 0:
         return "HEALTHY", score
-    if failed <= 2 and score >= 55:
-        return "DEGRADED", score
+
+    useful_sections = succeeded + partial
+    if useful_sections >= 1 and failed <= 2 and product_count >= MIN_PLAUSIBLE_PRODUCTS:
+        return "DEGRADED", max(score, 55)
+
     return "BROKEN", score
 
 

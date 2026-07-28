@@ -101,7 +101,14 @@ def _apply_historical_health(stats, previous_count: int | None):
     ratio = stats.unique_products / previous_count
     status, score = stats.health_status, stats.health_score
     if ratio < 0.40:
-        status, score = "BROKEN", min(score, 25)
+        # A collector-specific DEGRADED result can still be a trustworthy
+        # partial capture (for example, several Shopify collections obtained
+        # before a 429). Preserve that classification instead of discarding
+        # the whole batch solely because the previous run was larger.
+        if status == "HEALTHY":
+            status, score = "BROKEN", min(score, 25)
+        elif status == "DEGRADED":
+            score = min(score, 45)
     elif ratio < 0.70 and status == "HEALTHY":
         status, score = "DEGRADED", min(score, 60)
     return replace(stats, health_status=status, health_score=score)
