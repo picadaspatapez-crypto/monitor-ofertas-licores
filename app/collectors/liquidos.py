@@ -18,6 +18,7 @@ from playwright.sync_api import (
 )
 
 from app.collectors.base import StoreMetadata
+from app.deadlines import bounded_timeout_ms, ensure_budget
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
 from app.performance import (
     PerformanceSettings,
@@ -419,6 +420,7 @@ def _expand_current_page(page: Page, performance: PerformanceSettings) -> None:
     )
 
     for _ in range(MAX_LOAD_MORE_CLICKS):
+        ensure_budget("expansión de catálogo de Líquidos")
         _dismiss_overlays(page)
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         clicked = any(_click_visible(page.locator(selector)) for selector in load_more_selectors)
@@ -427,9 +429,9 @@ def _expand_current_page(page: Page, performance: PerformanceSettings) -> None:
             PRODUCT_SELECTOR,
             previous_count,
             timeout_ms=(
-                performance.dom_growth_timeout_ms
+                bounded_timeout_ms(performance.dom_growth_timeout_ms)
                 if clicked
-                else min(700, performance.dom_growth_timeout_ms)
+                else bounded_timeout_ms(min(700, performance.dom_growth_timeout_ms))
             ),
         )
         current_count = len(_product_signature(page))
@@ -485,7 +487,7 @@ def _click_next_button(
             page,
             PRODUCT_SELECTOR,
             previous,
-            timeout_ms=performance.dom_growth_timeout_ms,
+            timeout_ms=bounded_timeout_ms(performance.dom_growth_timeout_ms),
         ):
             return True
     return False
@@ -494,7 +496,12 @@ def _discover_sections(
     page: Page, performance: PerformanceSettings
 ) -> tuple[tuple[CatalogSection, ...], str]:
     try:
-        page.goto(_catalog_url(HOME_URL), wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+        ensure_budget("descubrimiento de categorías de Líquidos")
+        page.goto(
+            _catalog_url(HOME_URL),
+            wait_until="domcontentloaded",
+            timeout=bounded_timeout_ms(NAVIGATION_TIMEOUT_MS),
+        )
         _wait_for_catalog_content(page, performance, discovery=True)
         _dismiss_overlays(page)
         sections = _discover_sections_from_html(page.content())
@@ -550,6 +557,7 @@ def _collect_products() -> CollectionBatch:
             )
 
             for index, section in enumerate(sections, start=1):
+                ensure_budget(f"Líquidos categoría {section.name}")
                 started = time.monotonic()
                 phase_metrics = PhaseMetrics()
                 section_products: set[str] = set()
@@ -568,6 +576,7 @@ def _collect_products() -> CollectionBatch:
 
                 try:
                     for page_number in range(1, MAX_PAGES_PER_SECTION + 1):
+                        ensure_budget(f"Líquidos {section.name} página {page_number}")
                         if next_url is not None:
                             if next_url in visited_urls:
                                 break
@@ -576,7 +585,7 @@ def _collect_products() -> CollectionBatch:
                                 response = page.goto(
                                     next_url,
                                     wait_until="domcontentloaded",
-                                    timeout=NAVIGATION_TIMEOUT_MS,
+                                    timeout=bounded_timeout_ms(NAVIGATION_TIMEOUT_MS),
                                 )
                                 http_status = response.status if response else None
                                 _wait_for_catalog_content(page, performance)

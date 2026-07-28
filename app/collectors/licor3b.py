@@ -16,6 +16,7 @@ from playwright.sync_api import (
 )
 
 from app.collectors.base import StoreMetadata
+from app.deadlines import bounded_timeout_ms, ensure_budget
 from app.domain import (
     CollectedProduct,
     CollectionBatch,
@@ -246,12 +247,13 @@ def _scroll_until_stable(page: Page, performance: PerformanceSettings) -> None:
     previous_count = page.locator(PRODUCT_SELECTOR).count()
     stable_rounds = 0
     for _ in range(MAX_SCROLL_ROUNDS):
+        ensure_budget("scroll de Licor3B")
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         grew = wait_for_product_count_growth(
             page,
             PRODUCT_SELECTOR,
             previous_count,
-            timeout_ms=min(700, performance.dom_growth_timeout_ms),
+            timeout_ms=bounded_timeout_ms(min(700, performance.dom_growth_timeout_ms)),
         )
         current_count = page.locator(PRODUCT_SELECTOR).count()
         if grew or current_count > previous_count:
@@ -275,7 +277,12 @@ def _open_with_captcha_retries(
     last_html = ""
     last_status: Optional[int] = None
     for attempt in range(1, MAX_CAPTCHA_RETRIES + 1):
-        response = page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+        ensure_budget("navegación/CAPTCHA de Licor3B")
+        response = page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=bounded_timeout_ms(NAVIGATION_TIMEOUT_MS),
+        )
         last_status = response.status if response else None
         _wait_for_catalog_content(page, performance, discovery=discovery)
         last_html = page.content()
@@ -366,6 +373,7 @@ def _collect_products() -> CollectionBatch:
             )
 
             for index, section in enumerate(sections, start=1):
+                ensure_budget(f"Licor3B categoría {section.name}")
                 started = time.monotonic()
                 phase_metrics = PhaseMetrics()
                 section_products: set[str] = set()
@@ -378,6 +386,7 @@ def _collect_products() -> CollectionBatch:
 
                 try:
                     for page_number in range(1, MAX_PRODUCT_PAGES_PER_SECTION + 1):
+                        ensure_budget(f"Licor3B {section.name} página {page_number}")
                         requested_url = _section_page_url(section, page_number)
                         with phase_metrics.measure("navigation_wait"):
                             context, page, last_html, http_status = _open_with_captcha_retries(

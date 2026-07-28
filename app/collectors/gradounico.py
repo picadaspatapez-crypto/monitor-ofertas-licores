@@ -13,13 +13,20 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.collectors.base import StoreMetadata
+from app.deadlines import bounded_request_timeout, ensure_budget
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
 from app.performance import PhaseMetrics
 
 
 BASE_URL = "https://www.gradounico.cl"
-REQUEST_TIMEOUT = (12, 45)
+REQUEST_ORIGINS: tuple[str, ...] = (
+    "https://www.gradounico.cl",
+    "https://gradounico.cl",
+)
+REQUEST_TIMEOUT = (5, 18)
+PREFLIGHT_TIMEOUT = (4, 8)
 MAX_PAGES_PER_SECTION = 100
+MAX_CONSECUTIVE_CONNECTION_FAILURES = 2
 
 
 @dataclass(frozen=True)
@@ -76,10 +83,10 @@ _EXCLUDED_PATHS = {
 def _session() -> requests.Session:
     session = requests.Session()
     retry = Retry(
-        total=3,
-        connect=3,
-        read=3,
-        backoff_factor=0.6,
+        total=2,
+        connect=1,
+        read=2,
+        backoff_factor=0.4,
         status_forcelist=(429, 500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),
         raise_on_status=False,
@@ -113,9 +120,100 @@ def _canonical_url(raw_url: str) -> str:
     return urlunparse(("https", "www.gradounico.cl", path, "", "", ""))
 
 
-def _category_url(section: CatalogSection, page: int) -> str:
+def _category_url(
+    section: CatalogSection,
+    page: int,
+    *,
+    origin: str = BASE_URL,
+) -> str:
     query = urlencode({"page": page})
-    return f"{BASE_URL}{section.path}?{query}"
+    return f"{origin.rstrip('/')}{section.path}?{query}"
+
+
+def _probe_session() -> requests.Session:
+    """Create a no-retry session for the origin connectivity preflight."""
+
+    session = requests.Session()
+    session.mount(
+        "https://",
+        HTTPAdapter(
+            max_retries=Retry(
+                total=0,
+                connect=0,
+                read=0,
+                redirect=0,
+                raise_on_status=False,
+            )
+        ),
+    )
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+            "Accept-Language": "es-CL,es;q=0.9,en;q=0.7",
+        }
+    )
+    return session
+
+
+def _select_origin() -> str:
+    """Return the first reachable GradoÚnico origin or fail quickly.
+
+    The store occasionally accepts residential/search-engine traffic while timing
+    out from cloud providers.  Probing both the ``www`` and apex hosts before
+    iterating eleven categories prevents a 10+ minute chain of identical TCP
+    timeouts.  Any HTTP response proves that the TCP/TLS origin is reachable;
+    category requests still validate their own status codes afterwards.
+    """
+
+    failures: list[str] = []
+    session = _probe_session()
+    try:
+        for origin in REQUEST_ORIGINS:
+            ensure_budget("preflight de GradoÚnico")
+            probe_url = f"{origin.rstrip('/')}/api/mcp/llms.txt"
+            started = time.monotonic()
+            try:
+                response = session.get(
+                    probe_url,
+                    timeout=bounded_request_timeout(PREFLIGHT_TIMEOUT),
+                    allow_redirects=True,
+                    stream=True,
+                )
+                elapsed = time.monotonic() - started
+                response.close()
+                print(
+                    f"GradoÚnico preflight: origen={origin}, "
+                    f"HTTP={response.status_code}, duración={elapsed:.1f}s.",
+                    flush=True,
+                )
+                return origin
+            except requests.RequestException as exc:
+                elapsed = time.monotonic() - started
+                detail = f"{origin}: {type(exc).__name__} tras {elapsed:.1f}s"
+                failures.append(detail)
+                print(
+                    f"⚠ GradoÚnico preflight falló: {detail}.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    finally:
+        session.close()
+
+    raise RuntimeError(
+        "GradoÚnico no es accesible desde Railway; "
+        "se abrió el circuit breaker antes de recorrer categorías ("
+        + "; ".join(failures)
+        + ")."
+    )
+
+
+def _is_connection_failure(exc: BaseException) -> bool:
+    return isinstance(exc, (requests.ConnectTimeout, requests.ConnectionError))
 
 
 def _is_product_url(raw_url: str) -> bool:
@@ -234,7 +332,7 @@ def _merge(existing: CollectedProduct | None, incoming: CollectedProduct) -> Col
 def _health(section_stats: list[SectionStats], product_count: int) -> tuple[str, int]:
     if not section_stats or product_count == 0:
         return "BROKEN", 0
-    failed = sum(item.status == "failed" for item in section_stats)
+    failed = sum(item.status != "success" for item in section_stats)
     warnings = sum(item.structural_warning for item in section_stats)
     score = max(0, min(100, 100 - failed * 12 - warnings * 8))
     if failed == 0 and warnings == 0:
@@ -253,7 +351,10 @@ def _collect_products() -> CollectionBatch:
     aggregate = PhaseMetrics()
 
     try:
+        active_origin = _select_origin()
+        consecutive_connection_failures = 0
         for index, section in enumerate(CATALOG_SECTIONS, start=1):
+            ensure_budget(f"GradoÚnico categoría {section.name}")
             section_started = time.monotonic()
             metrics = PhaseMetrics()
             section_products: set[str] = set()
@@ -268,10 +369,12 @@ def _collect_products() -> CollectionBatch:
             )
             try:
                 for page_number in range(1, MAX_PAGES_PER_SECTION + 1):
-                    url = _category_url(section, page_number)
+                    ensure_budget(f"GradoÚnico {section.name} página {page_number}")
+                    url = _category_url(section, page_number, origin=active_origin)
                     with metrics.measure("http"):
-                        response = session.get(url, timeout=REQUEST_TIMEOUT)
+                        response = session.get(url, timeout=bounded_request_timeout(REQUEST_TIMEOUT))
                     response.raise_for_status()
+                    consecutive_connection_failures = 0
                     with metrics.measure("parse"):
                         page_products, page_cards = _parse_html(response.text, section.name)
                     signature = tuple(sorted(page_products))
@@ -307,8 +410,15 @@ def _collect_products() -> CollectionBatch:
             except Exception as exc:
                 status = "failed"
                 error_message = f"{type(exc).__name__}: {exc}"[:1000]
+                if _is_connection_failure(exc):
+                    consecutive_connection_failures += 1
+                else:
+                    consecutive_connection_failures = 0
                 print(
-                    f"✖ GradoÚnico {section.name}: {error_message}. Continúa con la siguiente categoría.",
+                    f"✖ GradoÚnico {section.name}: {error_message}. "
+                    f"Fallas de conexión consecutivas="
+                    f"{consecutive_connection_failures}/"
+                    f"{MAX_CONSECUTIVE_CONNECTION_FAILURES}.",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -330,6 +440,33 @@ def _collect_products() -> CollectionBatch:
                     performance_ms=metrics.as_dict(),
                 )
             )
+
+            if (
+                consecutive_connection_failures
+                >= MAX_CONSECUTIVE_CONNECTION_FAILURES
+            ):
+                remaining = CATALOG_SECTIONS[index:]
+                breaker_error = (
+                    "Circuit breaker abierto tras "
+                    f"{consecutive_connection_failures} fallas TCP consecutivas; "
+                    f"se omiten {len(remaining)} categorías para no prolongar la ejecución."
+                )
+                print(
+                    f"⚠ GradoÚnico: {breaker_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                for skipped in remaining:
+                    section_stats.append(
+                        SectionStats(
+                            key=skipped.key,
+                            name=skipped.name,
+                            url=f"{BASE_URL}{skipped.path}",
+                            status="skipped",
+                            error_message=breaker_error,
+                        )
+                    )
+                break
 
         if not all_products:
             raise RuntimeError("GradoÚnico no entregó productos en ninguna categoría.")
@@ -361,7 +498,7 @@ def _collect_products() -> CollectionBatch:
                 sections_succeeded=succeeded,
                 sections_failed=failed,
                 duplicates_removed=duplicates_removed,
-                discovery_source="configured-http-categories",
+                discovery_source="configured-http-categories-with-circuit-breaker",
                 health_status=health_status,
                 health_score=health_score,
                 structural_warnings=warnings,

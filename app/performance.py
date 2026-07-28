@@ -52,6 +52,7 @@ class PerformanceSettings:
     product_wait_timeout_ms: int = 8_000
     dom_growth_timeout_ms: int = 4_500
     quick_settle_ms: int = 250
+    collector_timeout_minutes: int = 25
 
     @classmethod
     def from_env(cls) -> "PerformanceSettings":
@@ -66,6 +67,9 @@ class PerformanceSettings:
             ),
             quick_settle_ms=_positive_int(
                 "QUICK_SETTLE_MS", 250, minimum=0, maximum=2_000
+            ),
+            collector_timeout_minutes=_positive_int(
+                "COLLECTOR_TIMEOUT_MINUTES", 25, minimum=1, maximum=120
             ),
         )
 

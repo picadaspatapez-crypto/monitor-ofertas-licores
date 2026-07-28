@@ -11,6 +11,7 @@ from app.collectors.base import Collector
 from app.collectors.registry import enabled_collectors
 from app.config import Settings
 from app.database import Base, create_database
+from app.deadlines import collector_budget
 from app.favorites import deliver_pending_favorite_alerts, evaluate_favorite_alerts
 from app.models import ScrapeRun, Store
 from app.notifications import (
@@ -289,6 +290,7 @@ def _run_collector(
     collector: Collector,
     SessionLocal,
     settings: Settings,
+    timeout_minutes: int,
 ) -> CollectorExecution:
     started = time.monotonic()
     run_id: int | None = None
@@ -305,7 +307,11 @@ def _run_collector(
             session.commit()
 
         collect_started = time.monotonic()
-        batch = collector.collect()
+        with collector_budget(
+            store_name=collector.store_name,
+            seconds=timeout_minutes * 60,
+        ):
+            batch = collector.collect()
         collect_ms = int((time.monotonic() - collect_started) * 1000)
         collected = batch.products
         saved = []
@@ -320,6 +326,12 @@ def _run_collector(
             previous_count = previous_successful_product_count(session, store, run.id)
             previous_health = previous_health_status(session, store, run.id)
             final_stats = _apply_historical_health(batch.stats, previous_count)
+            if final_stats.health_status == "BROKEN":
+                raise RuntimeError(
+                    f"{collector.store_name} entregó una cobertura no confiable "
+                    f"({len(collected)} productos; salud BROKEN). "
+                    "Se conservan los datos históricos y no se persiste esta captura parcial."
+                )
 
             for item in collected:
                 result = save_product(session, item, store, run)
@@ -380,12 +392,18 @@ def _run_collector(
             f"notify={notification_ms / 1000:.1f}s, total={total_ms / 1000:.1f}s.",
             flush=True,
         )
+        collector_success = final_stats.health_status != "BROKEN"
         return CollectorExecution(
             key=collector.key,
             store_name=collector.store_name,
-            success=True,
+            success=collector_success,
             duration_ms=total_ms,
             products_found=len(collected),
+            error_message=(
+                None
+                if collector_success
+                else "Collector finalizó con salud BROKEN; los datos incompletos no participan en comparaciones."
+            ),
             store_id=store_id,
             run_id=run_id,
             health_status=final_stats.health_status,
@@ -650,6 +668,13 @@ def _send_global_run_summary(
         )
 
 
+
+def _pipeline_exit_code(results: list[CollectorExecution]) -> int:
+    """A partial multi-store run is operationally successful when one store completed."""
+
+    return 0 if any(result.success for result in results) else 1
+
+
 def run_pipeline() -> int:
     settings = Settings.from_env()
     performance = PerformanceSettings.from_env()
@@ -666,7 +691,8 @@ def run_pipeline() -> int:
     print(
         f"Ejecución paralela: workers={min(performance.collector_workers, len(collectors))}; "
         f"bloqueo_recursos={'sí' if performance.block_browser_resources else 'no'}; "
-        f"espera_producto={performance.product_wait_timeout_ms} ms.",
+        f"espera_producto={performance.product_wait_timeout_ms} ms; "
+        f"límite_por_tienda={performance.collector_timeout_minutes} min.",
         flush=True,
     )
     print(
@@ -703,6 +729,7 @@ def run_pipeline() -> int:
                 collector=collector,
                 SessionLocal=SessionLocal,
                 settings=settings,
+                timeout_minutes=performance.collector_timeout_minutes,
             ): collector
             for collector in collectors
         }
@@ -763,5 +790,8 @@ def run_pipeline() -> int:
         )
     print("=" * 64, flush=True)
 
+    exit_code = _pipeline_exit_code(results)
     engine.dispose()
-    return 1 if failures else 0
+    # Una tienda caída no invalida los datos obtenidos correctamente por las demás.
+    # Railway solo marcará el cron como fallido cuando ninguna tienda termine bien.
+    return exit_code
