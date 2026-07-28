@@ -54,3 +54,24 @@ def test_optional_label_word_does_not_block_same_variant():
     left = build_product_signature("Johnnie Walker Black 750 ml")
     right = build_product_signature("Johnnie Walker Black Label 750 ml")
     assert compare_signatures(left, right).accepted
+
+
+def test_exact_product_can_match_across_four_stores():
+    from types import SimpleNamespace
+    from app.matching.cross_store import build_matching_plan
+
+    products = [
+        SimpleNamespace(id=1, store_id=1, name="Whisky Johnnie Walker Black Label 750 ml"),
+        SimpleNamespace(id=2, store_id=2, name="Johnnie Walker Black Label 750cc"),
+        SimpleNamespace(id=3, store_id=3, name="Whisky Johnnie Walker Etiqueta Negra 75cl"),
+        SimpleNamespace(id=4, store_id=4, name="JW Black Label 0,75 L"),
+    ]
+    plan = build_matching_plan(products, minimum_confidence=0.86)
+    assert plan.ambiguous_products == 0
+    assert len(plan.candidates) >= 3
+    connected_ids = {
+        product_id
+        for candidate in plan.candidates
+        for product_id in (candidate.left_id, candidate.right_id)
+    }
+    assert connected_ids == {1, 2, 3, 4}

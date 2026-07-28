@@ -19,10 +19,10 @@ def _clear_performance_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_performance_settings_defaults_to_two_workers(monkeypatch):
+def test_performance_settings_defaults_to_four_workers(monkeypatch):
     _clear_performance_env(monkeypatch)
     settings = PerformanceSettings.from_env()
-    assert settings.collector_workers == 2
+    assert settings.collector_workers == 4
     assert settings.block_browser_resources is True
     assert settings.product_wait_timeout_ms == 8_000
 
@@ -42,10 +42,10 @@ def test_performance_settings_accepts_safe_tuning(monkeypatch):
     assert settings.quick_settle_ms == 0
 
 
-def test_performance_settings_rejects_more_than_two_workers(monkeypatch):
+def test_performance_settings_rejects_more_than_four_workers(monkeypatch):
     _clear_performance_env(monkeypatch)
-    monkeypatch.setenv("COLLECTOR_WORKERS", "3")
-    with pytest.raises(RuntimeError, match="menor o igual a 2"):
+    monkeypatch.setenv("COLLECTOR_WORKERS", "5")
+    with pytest.raises(RuntimeError, match="menor o igual a 4"):
         PerformanceSettings.from_env()
 
 

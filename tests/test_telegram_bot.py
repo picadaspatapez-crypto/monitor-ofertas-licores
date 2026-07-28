@@ -99,6 +99,49 @@ def test_telegram_result_formatter_escapes_names_and_builds_buttons():
     assert buttons[0]["url"] == "https://example.com/a"
 
 
+def test_telegram_result_formatter_builds_buttons_for_four_stores():
+    now = datetime.now(timezone.utc)
+    offers = tuple(
+        SearchOffer(
+            product_id=index,
+            store_name=store,
+            product_name="Producto 750 ml",
+            price=20_000 + index * 1_000,
+            regular_price=None,
+            discount_pct=0,
+            url=f"https://example.com/{index}",
+            last_seen_at=now,
+        )
+        for index, store in enumerate(
+            ("Tost", "GradoÚnico", "Líquidos", "Licor3B"), start=1
+        )
+    )
+    result = SearchResult(
+        master_product_id=9,
+        canonical_name="Producto 750 ml",
+        brand=None,
+        variant=None,
+        volume_ml=750,
+        package_quantity=1,
+        score=0.95,
+        offers=offers,
+        winner=offers[0],
+        runner_up=offers[1],
+        saving_clp=1_000,
+        saving_pct=1_000 / 22_000,
+    )
+    _, markup = format_search_results("producto", [result])
+    assert markup is not None
+    keyboard = markup["inline_keyboard"]
+    assert len(keyboard) == 2
+    assert [button["url"] for row in keyboard for button in row] == [
+        "https://example.com/1",
+        "https://example.com/2",
+        "https://example.com/3",
+        "https://example.com/4",
+    ]
+
+
 class _FakeAPI:
     def __init__(self):
         self.messages = []
