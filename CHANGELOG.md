@@ -1,5 +1,28 @@
 # Changelog
 
+## v5.0.0 — Four-store Expansion & Unified Run Status
+
+- Añade collectors HTTP para Tost y GradoÚnico.
+- Amplía el registry y la ejecución paralela a cuatro tiendas.
+- Corrige el matching para grupos con tres o cuatro comercios.
+- Muestra hasta cuatro enlaces de compra en Telegram.
+- El comparador lista todas las tiendas disponibles por producto.
+- Excluye regalos, grabados, personalizados y combos ambiguos del matching automático.
+- Envía un resumen compacto con el estado de todos los collectors en cada ejecución.
+- Amplía `/estado` con salud, productos y fecha de la última revisión por tienda.
+- Mantiene Alembic en `0007_telegram_favorites`; no requiere migración.
+
+## v4.8.0 — Favorites & Personalized Alerts
+
+- Favoritos persistentes por chat autorizado.
+- Precio objetivo mediante `/avisar producto bajo precio`.
+- Administración con `/misfavoritos` y `/eliminarfavorito`.
+- Detección de baja, nueva tienda, cambio de ganador y reposición.
+- Mensajes combinados para evitar múltiples avisos del mismo producto.
+- Cola `favorite_alerts` con reintentos y estado de entrega.
+- Evaluación protegida por cobertura completa y collectors `HEALTHY`.
+- Migración `0007_telegram_favorites`.
+
 ## v4.7.0 — Interactive Telegram Search Bot
 
 - Bot de Telegram integrado al servicio web de búsqueda existente.
@@ -44,14 +67,3 @@
 
 - Corrige el uso keyword-only de `arg` en `Page.wait_for_function`.
 - Mantiene la recolección paralela y las esperas adaptativas.
-
-## v4.8.0 — Favorites & Personalized Alerts
-
-- Favoritos persistentes por chat autorizado.
-- Precio objetivo mediante `/avisar producto bajo precio`.
-- Administración con `/misfavoritos` y `/eliminarfavorito`.
-- Detección de baja, nueva tienda, cambio de ganador y reposición.
-- Mensajes combinados para evitar múltiples avisos del mismo producto.
-- Cola `favorite_alerts` con reintentos y estado de entrega.
-- Evaluación protegida por cobertura completa y collectors `HEALTHY`.
-- Migración `0007_telegram_favorites`.

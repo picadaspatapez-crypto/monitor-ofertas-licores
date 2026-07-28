@@ -1,5 +1,5 @@
 """Application release metadata."""
 
-APP_VERSION = "4.8.0"
+APP_VERSION = "5.0.0"
 __version__ = APP_VERSION
-RELEASE_NAME = "Favorites & Personalized Alerts"
+RELEASE_NAME = "Four-store Expansion & Unified Run Status"

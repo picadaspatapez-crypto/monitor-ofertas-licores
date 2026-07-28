@@ -31,3 +31,5 @@ __all__ = [
     "build_ranking_messages",
     "ranked_best_prices",
 ]
+
+from app.reports.global_summary import build_global_run_summary

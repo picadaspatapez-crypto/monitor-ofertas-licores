@@ -13,7 +13,7 @@ from app.favorites import (
     list_favorites,
     resolve_favorite_query,
 )
-from app.models import MasterProduct, Product, TelegramFavorite
+from app.models import MasterProduct, Product, ScrapeRun, Store, TelegramFavorite
 from app.search.web import SearchApplication
 from app.telegram_bot.api import TelegramAPI, TelegramAPIError
 from app.telegram_bot.commands import BotCommand, parse_command
@@ -30,6 +30,7 @@ from app.telegram_bot.formatting import (
     help_message,
     search_help_message,
     status_message,
+    StoreStatusView,
     unauthorized_message,
 )
 from app.telegram_bot.state import load_next_update_id, save_next_update_id
@@ -78,7 +79,9 @@ class TelegramSearchBot:
             reply_markup=reply_markup,
         )
 
-    def _catalog_status(self, chat_id: int) -> tuple[int, int, datetime | None, int]:
+    def _catalog_status(
+        self, chat_id: int
+    ) -> tuple[int, int, datetime | None, int, tuple[StoreStatusView, ...]]:
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=self.settings.max_age_hours
         )
@@ -110,9 +113,30 @@ class TelegramSearchBot:
                 )
                 or 0
             )
+            store_views: list[StoreStatusView] = []
+            stores = list(session.scalars(select(Store).where(Store.is_active.is_(True)).order_by(Store.name)))
+            for store in stores:
+                run = session.scalar(
+                    select(ScrapeRun)
+                    .where(ScrapeRun.store_id == store.id)
+                    .order_by(ScrapeRun.started_at.desc(), ScrapeRun.id.desc())
+                    .limit(1)
+                )
+                finished_at = run.finished_at if run is not None else None
+                if finished_at is not None and finished_at.tzinfo is None:
+                    finished_at = finished_at.replace(tzinfo=timezone.utc)
+                store_views.append(
+                    StoreStatusView(
+                        name=store.name,
+                        run_status=run.status if run is not None else "never",
+                        health_status=run.health_status if run is not None else None,
+                        products_found=int(run.products_found or 0) if run is not None else 0,
+                        finished_at=finished_at,
+                    )
+                )
         if latest_seen_at is not None and latest_seen_at.tzinfo is None:
             latest_seen_at = latest_seen_at.replace(tzinfo=timezone.utc)
-        return active_masters, fresh_products, latest_seen_at, favorite_count
+        return active_masters, fresh_products, latest_seen_at, favorite_count, tuple(store_views)
 
     def _handle_command(
         self,
@@ -136,7 +160,7 @@ class TelegramSearchBot:
             )
             return
         if command.name == "status":
-            active, fresh, latest, favorites = self._catalog_status(chat_id)
+            active, fresh, latest, favorites, stores = self._catalog_status(chat_id)
             self._send(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -146,6 +170,7 @@ class TelegramSearchBot:
                     latest_seen_at=latest,
                     max_age_hours=self.settings.max_age_hours,
                     favorites=favorites,
+                    stores=stores,
                 ),
             )
             return

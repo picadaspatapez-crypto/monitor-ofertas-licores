@@ -1,90 +1,91 @@
-# Arquitectura implementada — v4.3
+# Arquitectura implementada — v5.0
 
-## Flujo de ejecución
+## Servicios Railway
 
 ```text
-Railway Cron (cada 6 h)
+Railway Cron · monitor-ofertas-licores
         ↓
 Collector Registry
         ↓
-Licor3B ─────────┐
-                 ├─→ persistencia + historial PostgreSQL
-Líquidos ────────┘
+┌─────────────┬──────────────┬──────────┬─────────────┐
+│ Licor3B     │ Líquidos     │ Tost     │ GradoÚnico │
+│ Playwright  │ Playwright   │ HTTP     │ HTTP        │
+└─────────────┴──────────────┴──────────┴─────────────┘
         ↓
-Análisis histórico y salud
+PostgreSQL: productos, historial, runs y alertas
         ↓
-Política de alertas inteligentes
+Matching multi-tienda + catálogo de búsqueda
         ↓
-Reserva deduplicada en alerts
+Comparación + favoritos + resumen global
         ↓
 Telegram
-        ↓
-Proceso terminado
 ```
 
-## Principios operativos
+El segundo servicio, `buscador-licores`, permanece activo y comparte la misma base:
 
-1. El proceso es de una sola pasada; no contiene un bucle infinito.
-2. Railway controla la periodicidad y no se mantienen recursos activos entre ejecuciones.
-3. Un collector fallido no impide ejecutar la tienda siguiente.
-4. El historial de precios se guarda aunque Telegram falle.
-5. Cada mensaje lógico se reserva en PostgreSQL antes del envío.
-6. Los rankings idénticos no se repiten dentro del intervalo configurado.
-7. Los productos no tienen techo de precio para ingresar al ranking.
+```text
+SearchServer (HTTP /buscar y /api/search)
+TelegramSearchBot (long polling)
+                ↓
+          PostgreSQL compartido
+```
+
+## Paralelismo
+
+La configuración predeterminada es `COLLECTOR_WORKERS=4`. Cada collector tiene su
+propia sesión de base de datos. Solo dos workers abren Chromium; Tost y GradoÚnico
+utilizan `requests`, por lo que el aumento de concurrencia no implica cuatro navegadores.
+
+Dentro de una tienda las categorías siguen procesándose secuencialmente para limitar
+bloqueos, CAPTCHA y consumo de recursos.
+
+## Flujo posterior a la recolección
+
+```text
+Collect
+  ↓
+Persist + historial por tienda
+  ↓
+Reconcile cross-store matches
+  ↓
+Analyze price opportunities
+  ↓
+Refresh unified search catalog
+  ↓
+Evaluate personalized favorites
+  ↓
+Send compact all-store summary
+```
+
+Un collector fallido no cancela los otros. El resumen final siempre incluye los cuatro
+resultados de la ejecución, mientras los rankings extensos conservan su deduplicación.
 
 ## Módulos principales
 
 ```text
 app/
 ├── collectors/       # Implementaciones independientes por tienda
-├── pipeline/          # Orquestación de una ejecución completa
+├── pipeline/          # Orquestación concurrente y etapas posteriores
 ├── repositories/      # Escritura y lectura PostgreSQL
-├── analyzers/         # Cambios históricos y salud del catálogo
-├── notifications/     # Política que decide qué merece Telegram
-├── reports/           # Formato de mensajes
-├── services/          # Entrega a Telegram y estado de alertas
-├── matching/          # Normalización inicial de productos
-└── models.py          # Modelo SQLAlchemy
+├── analyzers/         # Cambios históricos y comparación multi-tienda
+├── notifications/     # Política y deduplicación
+├── reports/           # Telegram, comparación y resumen global
+├── services/          # Entrega y estado de alertas
+├── matching/          # Firmas, equivalencias y grupos maestros
+├── search/            # Catálogo unificado, web y API
+├── favorites/         # Seguimiento y precios objetivo
+└── telegram_bot/      # Interfaz interactiva
 ```
 
 ## Periodicidad
 
 `railway.toml` configura `0 */6 * * *` y `restartPolicyType = "NEVER"`.
-Railway inicia el contenedor, `entrypoint.sh` aplica Alembic, ejecuta el pipeline
-y el proceso sale. Si una ejecución se solapa con la siguiente, Railway omite la
-nueva ejecución.
+El cron inicia, aplica Alembic, ejecuta una sola pasada y termina. El buscador utiliza
+`railway.search.toml`, no tiene cron y permanece online.
 
-## Política de alertas
+## Estado y observabilidad
 
-### Inmediatas
-
-- bajas reales que superen el umbral porcentual o absoluto;
-- cambio a `DEGRADED` o `BROKEN`;
-- cambio estructural o categoría fallida;
-- recuperación a `HEALTHY`;
-- excepción completa del collector.
-
-### Digest
-
-El top 30 se envía si su huella cambia o si vence el intervalo de refresco. La
-huella incorpora posición, producto, precio actual, precio regular y descuento.
-
-### Silenciosas
-
-Una ejecución sana sin cambios relevantes se conserva en `scrape_runs` y
-`price_observations`, pero no genera mensajes.
-
-## v4.7 · Servicio interactivo
-
-`buscador-licores` ejecuta dos componentes dentro del mismo contenedor:
-
-```text
-SearchServer (HTTP /buscar y /api/search)
-TelegramSearchBot (long polling getUpdates)
-                ↓
-          PostgreSQL compartido
-```
-
-El web server mantiene el healthcheck de Railway. El worker de Telegram se
-ejecuta en un hilo independiente, restringe los chats autorizados y persiste su
-offset en `telegram_bot_state`.
+- `scrape_runs` conserva salud, cobertura, páginas, productos y métricas por sección.
+- `/estado` consulta la última ejecución de cada tienda activa.
+- Telegram recibe un resumen compacto por ejecución aunque no cambie ningún ranking.
+- Alertas extensas y comparativas siguen sujetas a huella e intervalo de refresco.

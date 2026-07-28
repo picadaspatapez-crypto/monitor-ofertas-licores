@@ -47,7 +47,7 @@ def _positive_int(name: str, default: int, *, minimum: int = 1, maximum: int | N
 
 @dataclass(frozen=True)
 class PerformanceSettings:
-    collector_workers: int = 2
+    collector_workers: int = 4
     block_browser_resources: bool = True
     product_wait_timeout_ms: int = 8_000
     dom_growth_timeout_ms: int = 4_500
@@ -56,7 +56,7 @@ class PerformanceSettings:
     @classmethod
     def from_env(cls) -> "PerformanceSettings":
         return cls(
-            collector_workers=_positive_int("COLLECTOR_WORKERS", 2, maximum=2),
+            collector_workers=_positive_int("COLLECTOR_WORKERS", 4, maximum=4),
             block_browser_resources=_bool_env("BLOCK_BROWSER_RESOURCES", True),
             product_wait_timeout_ms=_positive_int(
                 "PRODUCT_WAIT_TIMEOUT_MS", 8_000, minimum=1_000, maximum=30_000

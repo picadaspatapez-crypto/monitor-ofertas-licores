@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -8,6 +9,16 @@ from app.favorites.service import FavoriteResolution, FavoriteView
 from app.search.engine import SearchResult
 from app.search.formatting import format_clp, format_datetime_cl
 
+
+
+
+@dataclass(frozen=True)
+class StoreStatusView:
+    name: str
+    run_status: str
+    health_status: str | None
+    products_found: int
+    finished_at: datetime | None
 
 def _escape(value: object) -> str:
     return html.escape(str(value), quote=False)
@@ -76,16 +87,31 @@ def status_message(
     latest_seen_at: datetime | None,
     max_age_hours: int,
     favorites: int = 0,
+    stores: tuple[StoreStatusView, ...] = (),
 ) -> str:
     latest = format_datetime_cl(latest_seen_at) if latest_seen_at else "sin datos"
-    return (
-        "📊 <b>Estado del catálogo</b>\n\n"
-        f"Productos unificados: <b>{active_masters}</b>\n"
-        f"Publicaciones vigentes: <b>{fresh_products}</b>\n"
-        f"Tus favoritos activos: <b>{favorites}</b>\n"
-        f"Última observación: <b>{_escape(latest)}</b>\n"
-        f"Ventana de vigencia: <b>{max_age_hours} horas</b>"
-    )
+    lines = [
+        "📊 <b>Estado del catálogo</b>",
+        "",
+        f"Productos unificados: <b>{active_masters}</b>",
+        f"Publicaciones vigentes: <b>{fresh_products}</b>",
+        f"Tus favoritos activos: <b>{favorites}</b>",
+        f"Última observación: <b>{_escape(latest)}</b>",
+        f"Ventana de vigencia: <b>{max_age_hours} horas</b>",
+    ]
+    if stores:
+        lines.extend(["", "🏪 <b>Última revisión por tienda</b>"])
+        icons = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}
+        for store in stores:
+            health = store.health_status or store.run_status.upper()
+            icon = icons.get(health, "🔴" if store.run_status == "failed" else "⚪")
+            when = format_datetime_cl(store.finished_at) if store.finished_at else "sin ejecución"
+            lines.append(
+                f"{icon} <b>{_escape(store.name)}</b>: "
+                f"{store.products_found} productos · {_escape(health)}"
+            )
+            lines.append(f"   {_escape(when)}")
+    return "\n".join(lines)
 
 
 def _result_lines(index: int, result: SearchResult) -> list[str]:
@@ -131,13 +157,13 @@ def format_search_results(
             lines.append("")
         lines.extend(_result_lines(index, result))
 
-        row: list[dict[str, str]] = []
-        for offer in result.offers[:2]:
+        offer_buttons: list[dict[str, str]] = []
+        for offer in result.offers[:4]:
             if offer.url.startswith(("https://", "http://")):
                 label = f"{index} · {offer.store_name}"[:64]
-                row.append({"text": label, "url": offer.url})
-        if row:
-            keyboard.append(row)
+                offer_buttons.append({"text": label, "url": offer.url})
+        for start in range(0, len(offer_buttons), 2):
+            keyboard.append(offer_buttons[start : start + 2])
 
     lines.extend(
         [

@@ -16,14 +16,25 @@ def _comparison_lines(position: int, comparison: PriceComparison) -> list[str]:
     runner_up = comparison.runner_up
     if winner is None or runner_up is None:
         return []
-    lines = [
-        f"{position}. {comparison.canonical_name}",
-        f"🥇 {winner.store_name}: {clp(winner.price)}",
-        f"   {runner_up.store_name}: {clp(runner_up.price)}",
-        f"Ahorro: {clp(comparison.saving_clp)} ({comparison.saving_pct:.1%})",
-        f"Confianza del match: {_confidence_text(comparison.confidence)}",
-        f"Comprar más barato: {winner.url}",
-    ]
+    lines = [f"{position}. {comparison.canonical_name}"]
+    for offer_index, offer in enumerate(comparison.offers):
+        prefix = "🥇" if offer_index == 0 else f"{offer_index + 1}."
+        lines.append(f"{prefix} {offer.store_name}: {clp(offer.price)}")
+    lines.extend(
+        [
+            f"Ahorro: {clp(comparison.saving_clp)} ({comparison.saving_pct:.1%}) frente al segundo",
+            f"Confianza del match: {_confidence_text(comparison.confidence)}",
+            f"Comprar más barato: {winner.url}",
+        ]
+    )
+    if len(comparison.offers) > 2:
+        most_expensive = comparison.offers[-1]
+        total_saving = most_expensive.price - winner.price
+        total_pct = total_saving / most_expensive.price if most_expensive.price else 0.0
+        lines.insert(
+            -2,
+            f"Ahorro frente al más caro: {clp(total_saving)} ({total_pct:.1%})",
+        )
     return lines
 
 

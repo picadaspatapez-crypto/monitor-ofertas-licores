@@ -1,56 +1,68 @@
-# Monitor de Ofertas de Licores — v4.8.0
+# Monitor de Ofertas de Licores — v5.0.0
 
-Plataforma multi-tienda para **Licor3B** y **Líquidos.cl**. Recolecta catálogos
-en paralelo, conserva historial en PostgreSQL, compara productos equivalentes y
-permite buscar o seguir productos desde Telegram.
+Plataforma chilena multi-tienda para recolectar precios, comparar productos equivalentes,
+buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
 
-## Novedades de v4.8
+## Tiendas activas
 
-- Favoritos privados por chat autorizado.
-- Comando `/favorito` para seguir un producto.
-- Comando `/avisar ... bajo ...` para definir un precio objetivo en CLP.
-- Comandos `/misfavoritos` y `/eliminarfavorito ID`.
-- Avisos por baja de precio, objetivo alcanzado, tienda nueva, cambio de ganador
-  y reposición.
-- Una sola notificación combina todos los eventos del mismo producto y revisión.
-- Cola persistente de alertas con estados `pending`, `sent` y `failed`.
-- Evaluación únicamente cuando todos los collectors terminan `HEALTHY`.
-- Migración Alembic `0007_telegram_favorites`.
-- Sin servicios Railway ni variables obligatorias adicionales.
+- Licor3B
+- Líquidos
+- Tost
+- GradoÚnico
 
-## Arquitectura
+## Novedades de v5.0
 
-```text
-monitor-ofertas-licores (cron cada 6 horas)
-  ├─ Licor3B + Líquidos
-  ├─ matching y comparación
-  ├─ actualiza catálogo
-  └─ evalúa y envía alertas de favoritos
+- Dos collectors nuevos: `TostCollector` y `GradoUnicoCollector`.
+- Cuatro tiendas ejecutándose en paralelo con un máximo seguro de cuatro workers.
+- Tost y GradoÚnico usan solicitudes HTTP directas; Licor3B y Líquidos conservan Playwright.
+- Matching corregido para asociar el mismo producto en tres o cuatro tiendas, no solo en un par.
+- Comparador y buscador muestran todas las ofertas disponibles por tienda.
+- Botones de Telegram organizados en filas de dos, con hasta cuatro tiendas por resultado.
+- Filtros adicionales para evitar mezclar botellas con packs, regalos o productos personalizados.
+- Resumen compacto obligatorio al terminar cada revisión, con el estado de todas las tiendas.
+- `/estado` informa la última ejecución, salud y cantidad de productos de cada collector.
+- Favoritos y precios objetivo funcionan sobre el catálogo conjunto de las cuatro tiendas.
 
-PostgreSQL
-  ├─ catálogo e historial
-  ├─ favoritos por chat
-  └─ cola de alertas personalizadas
-
-buscador-licores (siempre online)
-  ├─ buscador web
-  └─ bot Telegram
-```
-
-## Comandos Telegram
+## Arquitectura Railway
 
 ```text
-/buscar johnnie black 750
-/favorito johnnie black 750
-/avisar johnnie black 750 bajo 25000
-/misfavoritos
-/eliminarfavorito 3
-/estado
-/ayuda
+Postgres
+   ▲
+   ├── monitor-ofertas-licores
+   │      cron cada 6 horas
+   │      Licor3B + Líquidos + Tost + GradoÚnico
+   │
+   └── buscador-licores
+          web /buscar + API + bot Telegram permanente
 ```
 
-También se puede buscar escribiendo un producto sin comando.
+Los collectors se ejecutan simultáneamente, pero únicamente Licor3B y Líquidos abren
+Chromium. Tost y GradoÚnico consultan catálogos HTTP, reduciendo el consumo de memoria.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V4.8.md`](DEPLOY_V4.8.md).
+Consulta [`DEPLOY_V5.0.md`](DEPLOY_V5.0.md).
+
+No hay una migración nueva en esta versión. El head de Alembic continúa en
+`0007_telegram_favorites`.
+
+## Ejecución local
+
+```bash
+pip install -r requirements.txt
+alembic upgrade head
+python main.py
+```
+
+Buscador web y bot:
+
+```bash
+pip install -r requirements-search.txt
+./search_entrypoint.sh
+```
+
+## Pruebas
+
+```bash
+PYTHONPATH=. python -m pytest
+```

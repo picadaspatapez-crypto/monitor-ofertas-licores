@@ -83,6 +83,11 @@ _GENERIC_WORDS = {
 }
 
 _PACK_WORD_RE = re.compile(r"\b(pack|caja|case|sixpack|estuche|combo)\b", re.IGNORECASE)
+_BUNDLE_MARKER_RE = re.compile(
+    r"\b(regalo|incluye|copa|vaso|jigger|miniatura|personalizad[oa]s?|grabada?|grabado)\b"
+    r"|(?:\+|\by\b)\s*\d*\s*(?:agua|bebida|tonica|tónica|red bull|copa|vaso)",
+    re.IGNORECASE,
+)
 _PACK_COUNT_PATTERNS = (
     re.compile(r"\b(?:pack|caja|case|combo)\s*(?:de\s*)?(\d{1,2})\b", re.IGNORECASE),
     re.compile(r"\b(\d{1,2})\s*(?:unidades|unidad|uds|ud|u)\b", re.IGNORECASE),
@@ -239,7 +244,7 @@ def extract_pack_count(text: str) -> int | None:
         count = int(match.group(1))
         if 2 <= count <= 48:
             return count
-    if _PACK_WORD_RE.search(normalized):
+    if _PACK_WORD_RE.search(normalized) or _BUNDLE_MARKER_RE.search(normalized):
         return 2
     return None
 
@@ -260,7 +265,9 @@ def build_product_signature(name: str) -> ProductSignature:
     normalized = _apply_aliases(name)
     volume_ml = extract_volume_ml(normalized)
     pack_count = extract_pack_count(normalized)
-    is_pack = pack_count is not None or bool(_PACK_WORD_RE.search(normalized))
+    is_pack = pack_count is not None or bool(
+        _PACK_WORD_RE.search(normalized) or _BUNDLE_MARKER_RE.search(normalized)
+    )
 
     cleaned = re.sub(r"\$\s*[\d.]+", " ", normalized)
     cleaned = re.sub(r"-?\d+(?:[.,]\d+)?\s*%", " ", cleaned)
@@ -426,19 +433,36 @@ def build_matching_plan(
                         )
                     )
 
-    best_by_product: dict[int, list[MatchCandidate]] = {}
+    # Una publicación puede tener un equivalente válido en cada una de las
+    # demás tiendas. La v4.5 elegía un único mejor candidato global, lo que
+    # convertía los empates exactos de 3 o más tiendas en una falsa
+    # ambigüedad. En v5.0 se elige el mejor candidato por tienda contraparte.
+    product_store = {
+        int(product.id): int(product.store_id)
+        for product in product_list
+        if product.store_id is not None
+    }
+    candidates_by_product_store: dict[tuple[int, int], list[MatchCandidate]] = {}
     for candidate in raw_candidates:
-        best_by_product.setdefault(candidate.left_id, []).append(candidate)
-        best_by_product.setdefault(candidate.right_id, []).append(candidate)
+        left_other_store = product_store.get(candidate.right_id)
+        right_other_store = product_store.get(candidate.left_id)
+        if left_other_store is not None:
+            candidates_by_product_store.setdefault(
+                (candidate.left_id, left_other_store), []
+            ).append(candidate)
+        if right_other_store is not None:
+            candidates_by_product_store.setdefault(
+                (candidate.right_id, right_other_store), []
+            ).append(candidate)
 
-    unambiguous_best: dict[int, MatchCandidate] = {}
-    ambiguous_products = 0
-    for product_id, candidates in best_by_product.items():
+    unambiguous_best: dict[tuple[int, int], MatchCandidate] = {}
+    ambiguous_product_ids: set[int] = set()
+    for key, candidates in candidates_by_product_store.items():
         ordered = sorted(candidates, key=lambda item: item.confidence, reverse=True)
         if len(ordered) > 1 and abs(ordered[0].confidence - ordered[1].confidence) < 0.015:
-            ambiguous_products += 1
+            ambiguous_product_ids.add(key[0])
             continue
-        unambiguous_best[product_id] = ordered[0]
+        unambiguous_best[key] = ordered[0]
 
     accepted: list[MatchCandidate] = []
     seen_pairs: set[tuple[int, int]] = set()
@@ -446,12 +470,18 @@ def build_matching_plan(
         pair = tuple(sorted((candidate.left_id, candidate.right_id)))
         if pair in seen_pairs:
             continue
+        left_store = product_store.get(candidate.left_id)
+        right_store = product_store.get(candidate.right_id)
+        if left_store is None or right_store is None:
+            continue
         if (
-            unambiguous_best.get(candidate.left_id) == candidate
-            and unambiguous_best.get(candidate.right_id) == candidate
+            unambiguous_best.get((candidate.left_id, right_store)) == candidate
+            and unambiguous_best.get((candidate.right_id, left_store)) == candidate
         ):
             accepted.append(candidate)
             seen_pairs.add(pair)
+
+    ambiguous_products = len(ambiguous_product_ids)
 
     return MatchingPlan(
         candidates=tuple(sorted(accepted, key=lambda item: (item.left_id, item.right_id))),

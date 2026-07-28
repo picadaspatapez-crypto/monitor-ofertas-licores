@@ -1,13 +1,19 @@
-# Roadmap hasta v5.0
+# Roadmap
 
-- **v4.0:** base multi-tienda.
-- **v4.1:** collector de Líquidos.
-- **v4.2:** ranking de 30 productos sin techo de precio.
-- **v4.3:** cron y alertas inteligentes deduplicadas.
-- **v4.4:** ejecución paralela y performance.
-- **v4.5:** matching conservador y comparador real entre tiendas.
-- **v4.6:** catálogo unificado y buscador web privado.
+## Completado
+
+- **v4.0–v4.4:** núcleo multi-tienda, segundo collector, alertas inteligentes y performance.
+- **v4.5:** matching y comparación de precios.
+- **v4.6:** catálogo unificado y buscador web.
 - **v4.7:** bot interactivo de Telegram.
-- **v4.8:** favoritos, precios objetivo y alertas personalizadas. (completado)
-- **v5.0:** incorporar al menos dos tiendas adicionales y ampliar el comparador,
-  buscador y favoritos a un catálogo de cuatro o más tiendas.
+- **v4.8:** favoritos, precios objetivo y alertas personalizadas.
+- **v5.0:** Tost + GradoÚnico, cuatro tiendas y resumen global de ejecución.
+
+## Próximas versiones
+
+- **v5.1:** estabilización de los cuatro collectors con logs reales, ajuste de categorías,
+  selectores, cobertura y rendimiento.
+- **v5.2:** incorporar las tres siguientes candidatas acordadas:
+  El Mundo del Vino, Socomep y Comercial JP.
+- **Posterior:** evaluar CAV con precio de socio personalizado y separación explícita
+  entre precio público y precio asociado a membresía.

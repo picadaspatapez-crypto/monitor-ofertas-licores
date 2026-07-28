@@ -1,9 +1,9 @@
-# Matching entre tiendas — v4.5
+# Matching entre tiendas — v5.0
 
 ## Objetivo
 
-Reconocer cuándo dos publicaciones representan el mismo producto comercial sin
-mezclar variantes ni formatos incompatibles.
+Reconocer el mismo producto comercial en dos, tres o cuatro tiendas sin mezclar
+variantes, volúmenes ni presentaciones incompatibles.
 
 ## Firma normalizada
 
@@ -12,51 +12,49 @@ Cada nombre se transforma en una firma con:
 - tokens relevantes;
 - marca inferida;
 - variante;
-- volumen normalizado en mililitros;
-- detección de pack o formato múltiple.
+- volumen en mililitros;
+- cantidad de unidades;
+- señales de pack, regalo o personalización.
 
-Ejemplo:
+Ejemplo compatible:
 
 ```text
 Whisky Johnnie Walker Black Label 750 ml
 Johnnie Walker Etiqueta Negra 75 cl
 ```
 
-Ambos quedan con marca `johnnie walker`, variante `black`, volumen `750 ml` y
-pueden compararse.
-
 ## Exclusiones automáticas
 
 No se fusionan automáticamente:
 
-- `Pack 6 cerveza 330 ml` con `Cerveza 330 ml`;
-- `Whisky X 750 ml` con `Whisky X 1 litro`;
-- `Johnnie Walker Black` con `Johnnie Walker Red`;
-- productos sin volumen verificable;
-- candidatos ambiguos.
+- una botella individual con cajas o packs;
+- productos de distinto volumen;
+- variantes como Black Label y Red Label;
+- regalos con vasos, copas, chocolates o bebidas;
+- botellas personalizadas o grabadas;
+- miniaturas y candidatos sin formato verificable;
+- candidatos ambiguos con puntajes casi idénticos.
 
-## Puntaje
+## Matching multi-tienda
 
-El confidence score combina:
+Para cada publicación se selecciona el mejor candidato recíproco **por cada tienda
+contraparte**. Esto permite que una publicación de Licor3B se relacione simultáneamente
+con sus equivalentes en Líquidos, Tost y GradoÚnico.
 
-- cobertura de palabras;
-- similitud Jaccard;
-- similitud de secuencia;
-- compatibilidad de marca;
-- compatibilidad de variante;
-- igualdad de volumen.
+No se usa un único “segundo mejor global”, porque en un catálogo de cuatro tiendas los
+tres equivalentes correctos pueden tener nombres muy similares y parecer ambiguos entre sí.
 
-Solo los matches con al menos 86 % se aceptan por defecto. Además, ambos
-productos deben elegirse mutuamente como su mejor candidato.
+## Confianza
+
+El puntaje combina cobertura de palabras, Jaccard, similitud de secuencia, marca,
+variante, volumen y cantidad. El umbral predeterminado continúa en 86 %.
 
 ## Persistencia
 
-El resultado se guarda en:
+- `products.master_product_id`
+- `product_matches.confidence`
+- `product_matches.matching_method`
+- `product_matches.review_status`
 
-- `products.master_product_id`;
-- `product_matches.confidence`;
-- `product_matches.matching_method`;
-- `product_matches.review_status`.
-
-Los productos maestros que quedan sin publicaciones se marcan como `merged`,
-pero no se eliminan para conservar trazabilidad.
+El comparador toma como máximo una publicación —la más barata— por tienda dentro de
+cada producto maestro y vuelve a validar todos los pares antes de publicar una oportunidad.

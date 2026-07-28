@@ -5,6 +5,8 @@ from collections.abc import Callable
 from app.collectors.base import Collector
 from app.collectors.licor3b import Licor3BCollector
 from app.collectors.liquidos import LiquidosCollector
+from app.collectors.tost import TostCollector
+from app.collectors.gradounico import GradoUnicoCollector
 
 
 CollectorFactory = Callable[[], Collector]
@@ -14,6 +16,8 @@ CollectorFactory = Callable[[], Collector]
 COLLECTOR_FACTORIES: tuple[CollectorFactory, ...] = (
     Licor3BCollector,
     LiquidosCollector,
+    TostCollector,
+    GradoUnicoCollector,
 )
 
 

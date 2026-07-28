@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,6 +15,7 @@ from app.favorites import deliver_pending_favorite_alerts, evaluate_favorite_ale
 from app.models import ScrapeRun, Store
 from app.notifications import (
     ComparisonAlertContext,
+    NotificationBundle,
     SmartAlertContext,
     build_comparison_notification_bundles,
     build_smart_notification_bundles,
@@ -35,6 +37,7 @@ from app.services import (
     failure_notification_bundle,
     send_message,
 )
+from app.reports.global_summary import build_global_run_summary
 from app.search.catalog import refresh_search_catalog
 from app.version import RELEASE_NAME, __version__
 
@@ -50,6 +53,10 @@ class CollectorExecution:
     store_id: int | None = None
     run_id: int | None = None
     health_status: str | None = None
+    new_products: int = 0
+    price_drops: int = 0
+    price_increases: int = 0
+    sections_failed: int = 0
 
 
 def _metrics_dict(stats, previous_count: int | None) -> dict:
@@ -382,6 +389,10 @@ def _run_collector(
             store_id=store_id,
             run_id=run_id,
             health_status=final_stats.health_status,
+            new_products=analysis.new_products,
+            price_drops=analysis.price_drops,
+            price_increases=analysis.price_increases,
+            sections_failed=final_stats.sections_failed,
         )
 
     except Exception as exc:
@@ -413,8 +424,8 @@ def _run_collector(
             error_message=f"{type(exc).__name__}: {exc}"[:1000],
             store_id=store_id,
             run_id=run_id,
+            sections_failed=1,
         )
-
 
 
 def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[CollectorExecution]) -> None:
@@ -592,6 +603,53 @@ def _run_favorite_alert_stage(
         )
 
 
+def _send_global_run_summary(
+    *,
+    SessionLocal,
+    settings: Settings,
+    results: list[CollectorExecution],
+    wall_duration_ms: int,
+) -> None:
+    if not results:
+        return
+    try:
+        message = build_global_run_summary(
+            results,
+            wall_duration_ms=wall_duration_ms,
+        )
+        payload_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
+        run_token = "-".join(
+            str(result.run_id) if result.run_id is not None else f"{result.key}-failed"
+            for result in sorted(results, key=lambda item: item.key)
+        )
+        bundle = NotificationBundle(
+            store_id=None,
+            run_id=None,
+            alert_type="global_run_summary",
+            deduplication_key=f"global-run-summary:{run_token}",
+            payload_hash=payload_hash,
+            reason="resumen compacto de todos los collectors",
+            messages=(message,),
+        )
+        sent, skipped, failed = deliver_notification_bundles(
+            SessionLocal=SessionLocal,
+            bundles=[bundle],
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+            send_message_fn=send_message,
+        )
+        print(
+            f"Telegram resumen global: enviados={sent}, omitidos={skipped}, fallidos={failed}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"⚠ No se pudo enviar el resumen global: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def run_pipeline() -> int:
     settings = Settings.from_env()
     performance = PerformanceSettings.from_env()
@@ -679,6 +737,12 @@ def run_pipeline() -> int:
     total_collectors = len(collectors)
     failures = sum(not result.success for result in results)
     wall_ms = int((time.monotonic() - pipeline_started) * 1000)
+    _send_global_run_summary(
+        SessionLocal=SessionLocal,
+        settings=settings,
+        results=results,
+        wall_duration_ms=wall_ms,
+    )
     sequential_ms = sum(result.duration_ms for result in results)
     saved_ms = max(0, sequential_ms - wall_ms)
 
