@@ -753,6 +753,17 @@ def run_pipeline() -> int:
                     flush=True,
                 )
 
+    # Confirmar inmediatamente en Telegram qué collectors terminaron, antes de
+    # ejecutar matching, reindexación y favoritos. Así una etapa posterior lenta
+    # no oculta tiendas correctas como Comercial JP.
+    collector_wall_ms = int((time.monotonic() - pipeline_started) * 1000)
+    _send_global_run_summary(
+        SessionLocal=SessionLocal,
+        settings=settings,
+        results=results,
+        wall_duration_ms=collector_wall_ms,
+    )
+
     _run_cross_store_stage(SessionLocal=SessionLocal, settings=settings, results=results)
     _refresh_search_catalog_stage(SessionLocal=SessionLocal)
     _run_favorite_alert_stage(
@@ -764,12 +775,6 @@ def run_pipeline() -> int:
     total_collectors = len(collectors)
     failures = sum(not result.success for result in results)
     wall_ms = int((time.monotonic() - pipeline_started) * 1000)
-    _send_global_run_summary(
-        SessionLocal=SessionLocal,
-        settings=settings,
-        results=results,
-        wall_duration_ms=wall_ms,
-    )
     sequential_ms = sum(result.duration_ms for result in results)
     saved_ms = max(0, sequential_ms - wall_ms)
 

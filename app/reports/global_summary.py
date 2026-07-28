@@ -37,7 +37,7 @@ def build_global_run_summary(
         "📊 Revisión multi-tienda completada",
         "",
         f"Tiendas correctas: {successful}/{len(ordered)}",
-        f"Duración total: {_duration(wall_duration_ms)}",
+        f"Duración collectors: {_duration(wall_duration_ms)}",
         "",
     ]
     icons = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}

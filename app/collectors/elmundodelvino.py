@@ -5,6 +5,8 @@ import random
 import re
 import sys
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode, urljoin, urlparse, urlunparse
@@ -15,7 +17,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.collectors.base import StoreMetadata
-from app.deadlines import bounded_request_timeout, ensure_budget
+from app.deadlines import bounded_request_timeout, ensure_budget, remaining_seconds
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
 from app.performance import PhaseMetrics
 
@@ -26,6 +28,10 @@ MAX_PAGES_PER_SECTION = 80
 JSON_PAGE_SIZE = 250
 MIN_PLAUSIBLE_PRODUCTS = 120
 SECTION_ATTEMPTS = 3
+CATEGORY_DELAY_RANGE_SECONDS = (8.0, 12.0)
+RATE_LIMIT_MIN_SECONDS = 30.0
+RATE_LIMIT_MAX_SECONDS = 120.0
+RATE_LIMIT_RETRIES = 1
 
 
 @dataclass(frozen=True)
@@ -60,9 +66,11 @@ def _session() -> requests.Session:
         connect=1,
         read=1,
         backoff_factor=0.7,
-        status_forcelist=(429, 500, 502, 503, 504),
+        # El HTTP 429 se maneja explícitamente para evitar reintentos ocultos y
+        # cascadas JSON→HTML que agraven el bloqueo de Shopify.
+        status_forcelist=(500, 502, 503, 504),
         allowed_methods=frozenset({"GET"}),
-        respect_retry_after_header=True,
+        respect_retry_after_header=False,
         raise_on_status=False,
     )
     session.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8))
@@ -80,6 +88,64 @@ def _session() -> requests.Session:
     )
     return session
 
+
+
+class RateLimitError(RuntimeError):
+    """Raised when Shopify keeps returning HTTP 429 after one controlled retry."""
+
+    def __init__(self, *, url: str, delay_seconds: float, attempts: int = 2) -> None:
+        self.url = url
+        self.delay_seconds = float(delay_seconds)
+        self.attempts = int(attempts)
+        super().__init__(
+            f"HTTP 429 persistente tras {self.attempts} intentos para {self.url}; "
+            f"última pausa={self.delay_seconds:.0f}s"
+        )
+
+
+def _retry_after_seconds(response: requests.Response) -> float:
+    raw = (response.headers.get("Retry-After") or "").strip()
+    delay: float | None = None
+    if raw:
+        try:
+            delay = float(raw)
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(raw)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                delay = (when - datetime.now(timezone.utc)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                delay = None
+    if delay is None or delay <= 0:
+        delay = RATE_LIMIT_MIN_SECONDS
+    return max(RATE_LIMIT_MIN_SECONDS, min(RATE_LIMIT_MAX_SECONDS, delay))
+
+
+def _sleep_with_budget(seconds: float, *, context: str) -> None:
+    ensure_budget(context)
+    remaining = remaining_seconds()
+    delay = max(0.0, float(seconds))
+    if remaining is not None:
+        available = max(0.0, remaining - 0.5)
+        if available <= 0:
+            ensure_budget(context)
+        delay = min(delay, available)
+    if delay > 0:
+        time.sleep(delay)
+    ensure_budget(context)
+
+
+def _rate_limit_wait(response: requests.Response, *, section_name: str, source: str) -> float:
+    delay = _retry_after_seconds(response)
+    print(
+        f"⚠ El Mundo del Vino {section_name}: HTTP 429 en {source}; "
+        f"pausa controlada de {delay:.0f}s antes de un único reintento.",
+        file=sys.stderr,
+        flush=True,
+    )
+    _sleep_with_budget(delay, context=f"rate limit de {section_name}")
+    return delay
 
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").replace("\xa0", " ").split())
@@ -355,27 +421,52 @@ def _fetch_json_page(
     last_error: Exception | None = None
     for host in (BASE_URL, ALT_BASE_URL):
         url = _json_url(section, page_number, host=host)
-        try:
-            with metrics.measure("json_http"):
-                response = session.get(
-                    url,
-                    timeout=bounded_request_timeout(REQUEST_TIMEOUT),
-                    headers={"Accept": "application/json", "Referer": _category_url(section, 1, host=host)},
-                )
-            if response.status_code in {404, 405}:
-                continue
-            response.raise_for_status()
+        last_delay = RATE_LIMIT_MIN_SECONDS
+        for rate_attempt in range(RATE_LIMIT_RETRIES + 1):
             try:
-                payload = response.json()
-            except (json.JSONDecodeError, ValueError) as exc:
+                with metrics.measure("json_http"):
+                    response = session.get(
+                        url,
+                        timeout=bounded_request_timeout(REQUEST_TIMEOUT),
+                        headers={
+                            "Accept": "application/json",
+                            "Referer": _category_url(section, 1, host=host),
+                        },
+                    )
+                if response.status_code == 429:
+                    last_delay = _retry_after_seconds(response)
+                    if rate_attempt < RATE_LIMIT_RETRIES:
+                        _rate_limit_wait(
+                            response,
+                            section_name=section.name,
+                            source=f"JSON página {page_number}",
+                        )
+                        continue
+                    raise RateLimitError(
+                        url=url,
+                        delay_seconds=last_delay,
+                        attempts=rate_attempt + 1,
+                    )
+                if response.status_code in {404, 405}:
+                    break
+                response.raise_for_status()
+                try:
+                    payload = response.json()
+                except (json.JSONDecodeError, ValueError) as exc:
+                    last_error = exc
+                    break
+                with metrics.measure("json_parse"):
+                    products, cards = _parse_json(payload, section.name)
+                if products or cards:
+                    return products, cards, url
+                break
+            except RateLimitError:
+                # Un 429 persistente no debe activar inmediatamente el fallback HTML:
+                # eso multiplicaría las solicitudes y prolongaría el bloqueo de Shopify.
+                raise
+            except Exception as exc:
                 last_error = exc
-                continue
-            with metrics.measure("json_parse"):
-                products, cards = _parse_json(payload, section.name)
-            if products or cards:
-                return products, cards, url
-        except Exception as exc:  # fallback HTML gestiona el error final
-            last_error = exc
+                break
     if last_error is not None:
         print(
             f"⚠ El Mundo del Vino {section.name}: feed JSON no utilizable "
@@ -384,7 +475,6 @@ def _fetch_json_page(
             flush=True,
         )
     return None
-
 
 def _fetch_html_page(
     session: requests.Session,
@@ -395,7 +485,9 @@ def _fetch_html_page(
     diagnostics: list[str] = []
     last_error: Exception | None = None
     hosts = (BASE_URL, ALT_BASE_URL)
-    for attempt in range(1, SECTION_ATTEMPTS + 1):
+    attempt = 1
+    rate_retries = 0
+    while attempt <= SECTION_ATTEMPTS:
         host = hosts[(attempt - 1) % len(hosts)]
         url = _category_url(section, page_number, host=host, cache_bust=attempt > 1)
         try:
@@ -410,6 +502,21 @@ def _fetch_html_page(
                     },
                 )
             diagnostics.append(f"intento {attempt}: {_response_details(response)}")
+            if response.status_code == 429:
+                delay = _retry_after_seconds(response)
+                if rate_retries < RATE_LIMIT_RETRIES:
+                    rate_retries += 1
+                    _rate_limit_wait(
+                        response,
+                        section_name=section.name,
+                        source=f"HTML página {page_number}",
+                    )
+                    continue
+                raise RateLimitError(
+                    url=url,
+                    delay_seconds=delay,
+                    attempts=rate_retries + 1,
+                )
             response.raise_for_status()
             with metrics.measure("html_parse"):
                 products, cards = _parse_html(response.text, section.name)
@@ -417,34 +524,54 @@ def _fetch_html_page(
                 return products, cards, url, "; ".join(diagnostics)
             if page_number > 1:
                 return {}, 0, url, "; ".join(diagnostics)
+        except RateLimitError:
+            raise
         except Exception as exc:
             last_error = exc
             diagnostics.append(f"intento {attempt}: {type(exc).__name__}: {exc}")
         if attempt < SECTION_ATTEMPTS:
-            time.sleep(min(4.0, 0.8 * attempt + random.uniform(0.1, 0.5)))
+            _sleep_with_budget(
+                min(4.0, 0.8 * attempt + random.uniform(0.1, 0.5)),
+                context=f"reintento HTML de {section.name}",
+            )
+        attempt += 1
     detail = "; ".join(diagnostics)
     if last_error is not None:
         raise RuntimeError(f"HTML sin productos tras {SECTION_ATTEMPTS} intentos ({detail})") from last_error
     raise RuntimeError(f"HTML sin productos tras {SECTION_ATTEMPTS} intentos ({detail})")
 
-
 def _collect_section(
     session: requests.Session,
     section: CatalogSection,
     metrics: PhaseMetrics,
-) -> tuple[dict[str, CollectedProduct], int, int, str]:
-    # Shopify JSON es mucho menos sensible a variantes de tema/HTML. Si no está disponible,
-    # el collector cae automáticamente al HTML que ya funcionó en versiones anteriores.
+) -> tuple[dict[str, CollectedProduct], int, int, str, bool, str | None]:
+    # Shopify JSON es la fuente preferida. Solo se usa HTML cuando JSON falla por
+    # una causa distinta de rate limiting. Un HTTP 429 persistente se respeta y
+    # no desencadena una cascada adicional de solicitudes.
     json_first = _fetch_json_page(session, section, 1, metrics)
     if json_first is not None:
         first_products, first_cards, first_url = json_first
         section_products = dict(first_products)
         cards = first_cards
         pages = 1
+        partial_warning = False
+        partial_error: str | None = None
         if len(first_products) >= JSON_PAGE_SIZE:
             for page_number in range(2, MAX_PAGES_PER_SECTION + 1):
                 ensure_budget(f"El Mundo del Vino {section.name} JSON página {page_number}")
-                page_result = _fetch_json_page(session, section, page_number, metrics)
+                try:
+                    page_result = _fetch_json_page(session, section, page_number, metrics)
+                except RateLimitError as exc:
+                    partial_warning = True
+                    partial_error = str(exc)
+                    print(
+                        f"⚠ El Mundo del Vino {section.name}: se conserva la página "
+                        f"ya obtenida ({len(section_products)} productos) y se corta la "
+                        f"paginación por rate limit: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    break
                 if page_result is None:
                     break
                 page_products, page_cards, _ = page_result
@@ -456,18 +583,36 @@ def _collect_section(
                 section_products.update(page_products)
                 if len(section_products) == before or len(page_products) < JSON_PAGE_SIZE:
                     break
-        return section_products, cards, pages, f"shopify_json:{first_url}"
+        source = f"shopify_json:{first_url}"
+        if partial_warning:
+            source += ":partial_rate_limited"
+        return section_products, cards, pages, source, partial_warning, partial_error
 
     section_products: dict[str, CollectedProduct] = {}
     cards = 0
     pages = 0
     previous_signature: tuple[str, ...] = ()
     source = "html"
+    partial_warning = False
+    partial_error: str | None = None
     for page_number in range(1, MAX_PAGES_PER_SECTION + 1):
         ensure_budget(f"El Mundo del Vino {section.name} HTML página {page_number}")
-        page_products, page_cards, url, diagnostics = _fetch_html_page(
-            session, section, page_number, metrics
-        )
+        try:
+            page_products, page_cards, url, diagnostics = _fetch_html_page(
+                session, section, page_number, metrics
+            )
+        except RateLimitError as exc:
+            if section_products:
+                partial_warning = True
+                partial_error = str(exc)
+                print(
+                    f"⚠ El Mundo del Vino {section.name}: HTML parcial conservado "
+                    f"({len(section_products)} productos); {exc}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                break
+            raise
         pages += 1
         cards += page_cards
         signature = tuple(sorted(page_products))
@@ -484,8 +629,7 @@ def _collect_section(
         if not page_products or len(section_products) == before:
             break
         source = f"html:{url}"
-    return section_products, cards, pages, source
-
+    return section_products, cards, pages, source, partial_warning, partial_error
 
 def _collect_products() -> CollectionBatch:
     started = time.monotonic()
@@ -506,9 +650,14 @@ def _collect_products() -> CollectionBatch:
             warning = False
             print(f"El Mundo del Vino categoría {index}/{len(CATALOG_SECTIONS)}: {section.name}", flush=True)
             try:
-                section_products, section_cards, section_pages, source = _collect_section(
-                    session, section, metrics
-                )
+                (
+                    section_products,
+                    section_cards,
+                    section_pages,
+                    source,
+                    partial_warning,
+                    partial_error,
+                ) = _collect_section(session, section, metrics)
                 if not section_products:
                     raise RuntimeError("la sección respondió, pero no entregó productos utilizables")
                 for product_url, product in section_products.items():
@@ -519,11 +668,23 @@ def _collect_products() -> CollectionBatch:
                     all_products[product_url] = _merge(all_products.get(product_url), product)
                 pages += section_pages
                 cards += section_cards
-                print(
-                    f"✓ El Mundo del Vino {section.name}: fuente={source}, páginas={section_pages}, "
-                    f"tarjetas={section_cards}, productos={len(section_urls)}, global={len(all_products)}",
-                    flush=True,
-                )
+                if partial_warning:
+                    status = "partial"
+                    warning = True
+                    error_message = (partial_error or "sección parcial por rate limit")[:1000]
+                    print(
+                        f"⚠ El Mundo del Vino {section.name}: captura parcial conservada; "
+                        f"fuente={source}, páginas={section_pages}, tarjetas={section_cards}, "
+                        f"productos={len(section_urls)}, global={len(all_products)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"✓ El Mundo del Vino {section.name}: fuente={source}, páginas={section_pages}, "
+                        f"tarjetas={section_cards}, productos={len(section_urls)}, global={len(all_products)}",
+                        flush=True,
+                    )
             except Exception as exc:
                 status = "failed"
                 warning = True
@@ -547,6 +708,13 @@ def _collect_products() -> CollectionBatch:
                 )
             )
             aggregate.merge(metrics)
+            if index < len(CATALOG_SECTIONS):
+                delay = random.uniform(*CATEGORY_DELAY_RANGE_SECONDS)
+                print(
+                    f"El Mundo del Vino: pausa preventiva de {delay:.1f}s antes de la siguiente categoría.",
+                    flush=True,
+                )
+                _sleep_with_budget(delay, context="pausa entre categorías de El Mundo del Vino")
     finally:
         session.close()
 
@@ -561,7 +729,7 @@ def _collect_products() -> CollectionBatch:
         sections_succeeded=sum(item.status == "success" for item in section_stats),
         sections_failed=sum(item.status != "success" for item in section_stats),
         duplicates_removed=duplicates,
-        discovery_source="shopify_json_with_html_fallback",
+        discovery_source="shopify_json_rate_limited_with_html_fallback",
         health_status=health_status,
         health_score=health_score,
         structural_warnings=sum(item.structural_warning for item in section_stats),
