@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import random
 import re
 import sys
 import time
@@ -10,24 +9,28 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlparse, urlunparse
 
-import requests
 from bs4 import BeautifulSoup, Tag
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from playwright.sync_api import Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from app.collectors.base import StoreMetadata
-from app.deadlines import bounded_request_timeout, ensure_budget
+from app.deadlines import bounded_timeout_ms, ensure_budget
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
-from app.performance import PhaseMetrics
+from app.performance import (
+    PerformanceSettings,
+    PhaseMetrics,
+    ResourceBlockStats,
+    install_resource_blocking,
+    wait_for_any_selector,
+)
 
 
 BASE_URL = "https://tost.cl"
-REQUEST_TIMEOUT = (5, 15)
+NAVIGATION_TIMEOUT_MS = 40_000
 MAX_PAGES_PER_SECTION = 30
 MIN_PLAUSIBLE_PRODUCTS = 50
-MIN_REQUEST_INTERVAL_SECONDS = 1.15
-MAX_RATE_LIMIT_RETRIES = 4
-MAX_IDENTICAL_PAGES = 2
+PRODUCT_SELECTOR = "a[href*='/products/']"
+RENDER_POLL_MS = 450
+MAX_RENDER_WAIT_MS = 12_000
 
 
 @dataclass(frozen=True)
@@ -37,8 +40,6 @@ class CatalogSection:
     handle: str
 
 
-# Colecciones públicas oficiales observadas en la navegación de Tost.
-# Se recorren las páginas HTML normales; no se depende del endpoint products.json.
 CATALOG_SECTIONS: tuple[CatalogSection, ...] = (
     CatalogSection("whisky", "Whisky", "whiskey"),
     CatalogSection("gin", "Gin", "gin"),
@@ -59,95 +60,6 @@ _SKIP_PERSONALIZED_RE = re.compile(
 )
 
 
-def _session() -> requests.Session:
-    session = requests.Session()
-    # Los 429 se administran explícitamente para respetar Retry-After. Dejar
-    # que urllib3 los reintente de forma oculta causaba ráfagas adicionales.
-    retries = Retry(
-        total=1,
-        connect=1,
-        read=1,
-        status=0,
-        backoff_factor=0.35,
-        allowed_methods=frozenset({"GET"}),
-        raise_on_status=False,
-    )
-    session.mount(
-        "https://",
-        HTTPAdapter(max_retries=retries, pool_connections=2, pool_maxsize=2),
-    )
-    session.headers.update(
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/126.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "es-CL,es;q=0.9,en;q=0.7",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "DNT": "1",
-            "Upgrade-Insecure-Requests": "1",
-        }
-    )
-    return session
-
-
-class _RateLimitedClient:
-    """Cliente secuencial para evitar que Tost responda HTTP 429."""
-
-    def __init__(self) -> None:
-        self.session = _session()
-        self._last_request_at = 0.0
-
-    def close(self) -> None:
-        self.session.close()
-
-    def _pace(self) -> None:
-        elapsed = time.monotonic() - self._last_request_at
-        target = MIN_REQUEST_INTERVAL_SECONDS + random.uniform(0.05, 0.35)
-        if elapsed < target:
-            time.sleep(target - elapsed)
-
-    @staticmethod
-    def _retry_after_seconds(response: requests.Response, attempt: int) -> float:
-        raw = (response.headers.get("Retry-After") or "").strip()
-        if raw.isdigit():
-            return min(60.0, max(2.0, float(raw)))
-        return min(45.0, 3.0 * (2 ** attempt) + random.uniform(0.5, 2.0))
-
-    def get(self, url: str) -> requests.Response:
-        last_response: requests.Response | None = None
-        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
-            ensure_budget(f"Tost GET {url}")
-            self._pace()
-            response = self.session.get(
-                url,
-                timeout=bounded_request_timeout(REQUEST_TIMEOUT),
-            )
-            self._last_request_at = time.monotonic()
-            last_response = response
-            if response.status_code != 429:
-                response.raise_for_status()
-                return response
-            if attempt >= MAX_RATE_LIMIT_RETRIES:
-                break
-            wait_seconds = self._retry_after_seconds(response, attempt)
-            print(
-                f"⚠ Tost respondió 429; pausa adaptativa de {wait_seconds:.1f}s "
-                f"antes del reintento {attempt + 2}/{MAX_RATE_LIMIT_RETRIES + 1}.",
-                file=sys.stderr,
-                flush=True,
-            )
-            ensure_budget("espera por rate limit de Tost")
-            time.sleep(wait_seconds)
-
-        assert last_response is not None
-        last_response.raise_for_status()
-        return last_response
-
-
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").replace("\xa0", " ").split())
 
@@ -165,8 +77,6 @@ def _money(value: Any) -> int | None:
         integer = int(value)
         return integer if 100 <= integer <= 20_000_000 else None
     raw = str(value).replace("$", "").replace(" ", "").strip()
-    # Shopify suele entregar "7990.00"; la tienda visible usa "7.990".
-    # Se distinguen decimales de separadores de miles antes de convertir.
     if re.fullmatch(r"\d+[.,]\d{2}", raw):
         normalized = raw.replace(",", ".")
     else:
@@ -189,8 +99,6 @@ def _variant_name(title: str, variant: dict[str, Any], total_variants: int) -> s
     variant_title = _normalize_text(str(variant.get("title") or ""))
     if total_variants <= 1 or variant_title.casefold() in {"", "default title", "default"}:
         return title
-    # Shopify usa variantes reales para cepas y formatos. Añadir el nombre de
-    # la variante evita guardar dos precios distintos con el mismo título.
     if variant_title.casefold() in title.casefold():
         return title
     return f"{title} · {variant_title}"[:500]
@@ -199,22 +107,15 @@ def _variant_name(title: str, variant: dict[str, Any], total_variants: int) -> s
 def _parse_shopify_payload(
     payload: dict[str, Any], section_name: str
 ) -> tuple[dict[str, CollectedProduct], int]:
+    """Kept for compatibility and parser tests; browser HTML is the live path."""
     products: dict[str, CollectedProduct] = {}
     raw_products = [item for item in (payload.get("products") or []) if isinstance(item, dict)]
     cards_seen = len(raw_products)
     for raw_product in raw_products:
-        if not isinstance(raw_product, dict):
-            continue
         title = _normalize_text(str(raw_product.get("title") or ""))
         handle = str(raw_product.get("handle") or "").strip()
-        if len(title) < 3 or not handle:
+        if len(title) < 3 or not handle or _SKIP_PERSONALIZED_RE.search(title):
             continue
-        # Tost publica una ficha personalizada junto a la botella normal. Se
-        # omite para no duplicar ni comparar un servicio de grabado como si
-        # fuera exactamente el mismo artículo.
-        if _SKIP_PERSONALIZED_RE.search(title):
-            continue
-
         variants = [item for item in (raw_product.get("variants") or []) if isinstance(item, dict)]
         for variant in variants:
             if variant.get("available") is False:
@@ -227,10 +128,9 @@ def _parse_shopify_payload(
                 regular = None
             variant_id = variant.get("id") if len(variants) > 1 else None
             url = _canonical_product_url(handle, variant_id)
-            name = _variant_name(title, variant, len(variants))
             products[url] = CollectedProduct(
                 store="Tost",
-                name=name,
+                name=_variant_name(title, variant, len(variants)),
                 url=url,
                 current_price=current,
                 regular_price=regular,
@@ -249,8 +149,6 @@ def _valid_html_product_link(raw_url: str) -> bool:
 
 def _html_price_values(text: str) -> list[int]:
     values: list[int] = []
-    # Elimina precios unitarios por litro o por artículo antes de tomar el
-    # precio comercial principal de la tarjeta.
     cleaned = re.sub(
         r"\$\s*[\d.]+\s*(?:/\s*litros?|cada\s+art[ií]culo)",
         " ",
@@ -293,61 +191,49 @@ def _unique_product_handles(root: Tag | BeautifulSoup) -> set[str]:
     return handles
 
 
-def _product_grid_root(soup: BeautifulSoup) -> Tag | BeautifulSoup:
-    """Escoge el contenedor con más fichas reales de la colección.
-
-    Tost incluye una parrilla de recomendaciones (normalmente 11 productos)
-    además de la colección principal. La implementación anterior tomaba el
-    primer `.product-grid`, por lo que todas las páginas parecían idénticas.
-    """
-
-    selectors = (
-        "#product-grid",
-        "#ProductGridContainer",
-        "[id*='main-collection' i]",
-        "[id*='product-grid' i]",
-        "[data-product-grid]",
-        "[data-collection-products]",
-        ".collection__product-grid",
-        ".boost-pfs-filter-products",
-        ".product-grid",
-        "main",
+def _expected_result_count(html: str) -> int | None:
+    text = _normalize_text(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    patterns = (
+        r"Mostrar\s+(\d+)\s+resultados?",
+        r"Mostrando\s+\d+\s+de\s+(\d+)",
+        r"(\d+)\s+resultados?",
     )
-    candidates: list[Tag | BeautifulSoup] = []
-    seen_nodes: set[int] = set()
-    for selector in selectors:
-        for root in soup.select(selector):
-            if not isinstance(root, Tag) or id(root) in seen_nodes:
-                continue
-            seen_nodes.add(id(root))
-            candidates.append(root)
+    for pattern in patterns:
+        matches = [int(value) for value in re.findall(pattern, text, re.IGNORECASE)]
+        if matches:
+            return max(matches)
+    return None
 
-    # El documento completo es un último respaldo cuando el tema no expone
-    # un contenedor semántico estable.
-    candidates.append(soup)
 
-    best: Tag | BeautifulSoup = soup
-    best_score = (-1, -1, 0)
-    for root in candidates:
-        handles = _unique_product_handles(root)
-        if not handles:
-            continue
-        attrs = ""
-        if isinstance(root, Tag):
-            attrs = " ".join(
-                [str(root.get("id") or ""), " ".join(root.get("class") or [])]
-            ).casefold()
-        semantic_bonus = int(
-            any(token in attrs for token in ("product-grid", "collection", "boost-pfs"))
-        )
-        # Se prioriza la cantidad de fichas; ante empate, el contenedor
-        # semántico y luego el más pequeño para excluir recomendaciones.
-        text_size = len(_normalize_text(root.get_text(" ", strip=True)))
-        score = (len(handles), semantic_bonus, -text_size)
-        if score > best_score:
-            best = root
-            best_score = score
-    return best
+def _product_grid_root(soup: BeautifulSoup) -> Tag | BeautifulSoup:
+    """Prefer the rendered collection grid over the 11-item recommendation rail."""
+    priority_groups = (
+        (
+            "#product-grid",
+            "#ProductGridContainer #product-grid",
+            "#ProductGridContainer",
+            "[id*='main-collection-product-grid' i]",
+            "[id*='main-collection' i]",
+            "[data-collection-products]",
+            "[data-product-grid]",
+            ".boost-pfs-filter-products",
+            ".collection__product-grid",
+        ),
+        (".product-grid", "main"),
+    )
+    for selectors in priority_groups:
+        candidates: list[Tag] = []
+        seen: set[int] = set()
+        for selector in selectors:
+            for root in soup.select(selector):
+                if isinstance(root, Tag) and id(root) not in seen:
+                    seen.add(id(root))
+                    candidates.append(root)
+        if candidates:
+            best = max(candidates, key=lambda root: len(_unique_product_handles(root)))
+            if _unique_product_handles(best):
+                return best
+    return soup
 
 
 def _parse_html(html: str, section_name: str) -> tuple[dict[str, CollectedProduct], int]:
@@ -394,10 +280,6 @@ def _parse_html(html: str, section_name: str) -> tuple[dict[str, CollectedProduc
     return products, len(seen_handles)
 
 
-def _collection_url(section: CatalogSection, page_number: int) -> str:
-    return f"{BASE_URL}/collections/{section.handle}?page={page_number}"
-
-
 def _discover_page_count(html: str, first_page_cards: int) -> int:
     soup = BeautifulSoup(html, "html.parser")
     discovered = {1}
@@ -406,26 +288,17 @@ def _discover_page_count(html: str, first_page_cards: int) -> int:
         match = re.search(r"(?:[?&])page=(\d+)", href)
         if match:
             discovered.add(int(match.group(1)))
-
-    text = _normalize_text(soup.get_text(" ", strip=True))
-    progress = re.search(r"Mostrando\s+(\d+)\s+de\s+(\d+)", text, re.IGNORECASE)
-    if progress:
-        shown = max(1, int(progress.group(1)))
-        total = max(shown, int(progress.group(2)))
-        page_size = max(1, first_page_cards or shown)
+    total = _expected_result_count(html)
+    if total:
+        page_size = max(1, first_page_cards)
         discovered.add(math.ceil(total / page_size))
-
     return max(1, min(MAX_PAGES_PER_SECTION, max(discovered)))
 
 
-def _fetch_html_page(
-    client: _RateLimitedClient,
-    section: CatalogSection,
-    page_number: int,
-) -> tuple[int, str, int]:
-    ensure_budget(f"Tost {section.name} página {page_number}")
-    response = client.get(_collection_url(section, page_number))
-    return page_number, response.text, response.status_code
+def _collection_url(section: CatalogSection, page_number: int) -> str:
+    base = f"{BASE_URL}/collections/{section.handle}"
+    return base if page_number == 1 else f"{base}?page={page_number}"
+
 
 def _merge(existing: CollectedProduct | None, incoming: CollectedProduct) -> CollectedProduct:
     if existing is None:
@@ -450,189 +323,261 @@ def _health(section_stats: list[SectionStats], product_count: int) -> tuple[str,
     return "BROKEN", score
 
 
+def _create_context(
+    browser: Browser,
+    performance: PerformanceSettings,
+    block_stats: ResourceBlockStats,
+) -> BrowserContext:
+    context = browser.new_context(
+        locale="es-CL",
+        timezone_id="America/Santiago",
+        viewport={"width": 1440, "height": 1000},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        ),
+        extra_http_headers={"Accept-Language": "es-CL,es;q=0.9,en;q=0.7"},
+    )
+    install_resource_blocking(
+        context,
+        enabled=performance.block_browser_resources,
+        stats=block_stats,
+    )
+    return context
+
+
+def _dismiss_overlays(page: Page) -> None:
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
+    for selector in (
+        "button[aria-label*='cerrar' i]",
+        "button[aria-label*='close' i]",
+        "[role='dialog'] button:has-text('Cerrar')",
+        ".modal button.close",
+    ):
+        try:
+            locator = page.locator(selector).first
+            if locator.is_visible(timeout=200):
+                locator.click(timeout=800)
+        except Exception:
+            continue
+
+
+def _rendered_page_html(
+    page: Page,
+    section: CatalogSection,
+    page_number: int,
+    performance: PerformanceSettings,
+) -> tuple[str, int | None]:
+    ensure_budget(f"Tost {section.name} página {page_number}")
+    response = page.goto(
+        _collection_url(section, page_number),
+        wait_until="domcontentloaded",
+        timeout=bounded_timeout_ms(NAVIGATION_TIMEOUT_MS),
+    )
+    status = response.status if response else None
+    if status == 429:
+        page.wait_for_timeout(bounded_timeout_ms(5_000))
+        response = page.reload(
+            wait_until="domcontentloaded",
+            timeout=bounded_timeout_ms(NAVIGATION_TIMEOUT_MS),
+        )
+        status = response.status if response else status
+    if status is not None and status >= 400:
+        raise RuntimeError(f"HTTP {status} al abrir {_collection_url(section, page_number)}")
+
+    wait_for_any_selector(
+        page,
+        PRODUCT_SELECTOR,
+        timeout_ms=bounded_timeout_ms(performance.product_wait_timeout_ms),
+        settle_ms=performance.quick_settle_ms,
+    )
+    _dismiss_overlays(page)
+
+    started = time.monotonic()
+    last_html = page.content()
+    while (time.monotonic() - started) * 1000 < MAX_RENDER_WAIT_MS:
+        ensure_budget(f"render dinámico de Tost {section.name}")
+        html = page.content()
+        products, cards = _parse_html(html, section.name)
+        expected = _expected_result_count(html)
+        threshold = min(expected, 20) if expected else 1
+        if cards >= max(1, threshold) and products:
+            return html, status
+        last_html = html
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(bounded_timeout_ms(RENDER_POLL_MS))
+    return last_html, status
+
+
 def _collect_products() -> CollectionBatch:
     started = time.monotonic()
     all_products: dict[str, CollectedProduct] = {}
     section_stats: list[SectionStats] = []
     pages_visited = cards_seen = duplicates_removed = 0
     aggregate = PhaseMetrics()
-    client = _RateLimitedClient()
+    performance = PerformanceSettings.from_env()
+    block_stats = ResourceBlockStats()
 
-    try:
-        for index, section in enumerate(CATALOG_SECTIONS, start=1):
-            ensure_budget(f"Tost categoría {section.name}")
-            section_started = time.monotonic()
-            metrics = PhaseMetrics()
-            section_products: set[str] = set()
-            section_cards = section_pages = section_duplicates = 0
-            status = "success"
-            error_message: str | None = None
-            structural_warning = False
-            print(
-                f"Tost categoría {index}/{len(CATALOG_SECTIONS)}: {section.name}",
-                flush=True,
-            )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking"],
+        )
+        context = _create_context(browser, performance, block_stats)
+        page = context.new_page()
+        try:
+            for index, section in enumerate(CATALOG_SECTIONS, start=1):
+                ensure_budget(f"Tost categoría {section.name}")
+                section_started = time.monotonic()
+                metrics = PhaseMetrics()
+                section_products: set[str] = set()
+                section_cards = section_pages = section_duplicates = 0
+                status = "success"
+                error_message: str | None = None
+                structural_warning = False
+                previous_signature: tuple[str, ...] = ()
+                print(f"Tost categoría {index}/{len(CATALOG_SECTIONS)}: {section.name}", flush=True)
 
-            def merge_page(
-                *,
-                page_number: int,
-                page_products: dict[str, CollectedProduct],
-                page_cards: int,
-                status_code: int,
-            ) -> int:
-                nonlocal pages_visited, cards_seen, duplicates_removed
-                nonlocal section_pages, section_cards, section_duplicates
-                pages_visited += 1
-                section_pages += 1
-                cards_seen += page_cards
-                section_cards += page_cards
-                new_page = 0
-                for url, product in page_products.items():
-                    if url in section_products:
-                        section_duplicates += 1
-                    else:
-                        section_products.add(url)
-                        new_page += 1
-                    if url in all_products:
-                        duplicates_removed += 1
-                    all_products[url] = _merge(all_products.get(url), product)
-                print(
-                    f"Tost {section.key} página {page_number}: HTTP={status_code}, "
-                    f"tarjetas={page_cards}, productos={len(page_products)}, "
-                    f"nuevos={new_page}, sección={len(section_products)}, global={len(all_products)}",
-                    flush=True,
-                )
-                return new_page
+                try:
+                    with metrics.measure("browser_navigation_render"):
+                        first_html, first_status = _rendered_page_html(
+                            page, section, 1, performance
+                        )
+                    with metrics.measure("parse"):
+                        first_products, first_cards = _parse_html(first_html, section.name)
+                    expected_total = _expected_result_count(first_html)
+                    page_count = _discover_page_count(first_html, first_cards)
 
-            try:
-                with metrics.measure("http"):
-                    first_page_number, first_html, first_status = _fetch_html_page(
-                        client, section, 1
-                    )
-                with metrics.measure("parse"):
-                    first_products, first_cards = _parse_html(first_html, section.name)
-                merge_page(
-                    page_number=first_page_number,
-                    page_products=first_products,
-                    page_cards=first_cards,
-                    status_code=first_status,
-                )
-                if first_cards == 0 or not first_products:
-                    structural_warning = True
-
-                page_count = _discover_page_count(first_html, first_cards)
-                previous_fingerprint = frozenset(first_products)
-                identical_pages = 0
-                if page_count > 1:
-                    with metrics.measure("rate_limited_pages"):
-                        for page_number in range(2, page_count + 1):
-                            ensure_budget(f"Tost categoría {section.name}")
-                            fetched_page, html, status_code = _fetch_html_page(
-                                client, section, page_number
-                            )
+                    for page_number in range(1, page_count + 1):
+                        if page_number == 1:
+                            html, http_status = first_html, first_status
+                            page_products, page_cards = first_products, first_cards
+                        else:
+                            with metrics.measure("browser_navigation_render"):
+                                html, http_status = _rendered_page_html(
+                                    page, section, page_number, performance
+                                )
                             with metrics.measure("parse"):
                                 page_products, page_cards = _parse_html(html, section.name)
-                            fingerprint = frozenset(page_products)
-                            if fingerprint and fingerprint == previous_fingerprint:
-                                identical_pages += 1
-                            else:
-                                identical_pages = 0
-                            new_page = merge_page(
-                                page_number=fetched_page,
-                                page_products=page_products,
-                                page_cards=page_cards,
-                                status_code=status_code,
+
+                        signature = tuple(sorted(page_products))
+                        if page_number > 1 and signature == previous_signature:
+                            raise RuntimeError(
+                                "Tost repitió el mismo conjunto renderizado; "
+                                "la paginación dinámica no avanzó."
                             )
-                            if not page_products:
-                                break
-                            if identical_pages >= MAX_IDENTICAL_PAGES:
-                                structural_warning = True
-                                raise RuntimeError(
-                                    "Tost repitió el mismo conjunto de productos en "
-                                    f"{identical_pages + 1} páginas consecutivas; "
-                                    "posible selector o paginación inválida"
-                                )
-                            # Si la última página no aporta productos y no es una
-                            # repetición idéntica, el sitio probablemente acortó el
-                            # catálogo mientras se ejecutaba la revisión.
-                            if new_page == 0 and page_number == page_count:
-                                structural_warning = True
-                            previous_fingerprint = fingerprint
-            except Exception as exc:
-                status = "failed"
-                error_message = f"{type(exc).__name__}: {exc}"[:1000]
-                print(
-                    f"✖ Tost {section.name}: {error_message}. Continúa con la siguiente categoría.",
-                    file=sys.stderr,
-                    flush=True,
+                        previous_signature = signature
+                        pages_visited += 1
+                        section_pages += 1
+                        cards_seen += page_cards
+                        section_cards += page_cards
+                        new_page = 0
+                        for url, product in page_products.items():
+                            if url in section_products:
+                                section_duplicates += 1
+                            else:
+                                section_products.add(url)
+                                new_page += 1
+                            if url in all_products:
+                                duplicates_removed += 1
+                            all_products[url] = _merge(all_products.get(url), product)
+                        print(
+                            f"Tost {section.key} página {page_number}/{page_count}: "
+                            f"HTTP={http_status}, tarjetas={page_cards}, "
+                            f"productos={len(page_products)}, nuevos={new_page}, "
+                            f"sección={len(section_products)}, global={len(all_products)}",
+                            flush=True,
+                        )
+                        if not page_products:
+                            structural_warning = True
+                            break
+                        if expected_total and len(section_products) >= expected_total:
+                            break
+                        if page_number < page_count:
+                            page.wait_for_timeout(bounded_timeout_ms(700))
+
+                    if expected_total and len(section_products) < min(expected_total, 20):
+                        structural_warning = True
+                        raise RuntimeError(
+                            f"Tost esperaba {expected_total} resultados pero solo renderizó "
+                            f"{len(section_products)}."
+                        )
+                except Exception as exc:
+                    status = "failed"
+                    error_message = f"{type(exc).__name__}: {exc}"[:1000]
+                    print(
+                        f"✖ Tost {section.name}: {error_message}. "
+                        "Continúa con la siguiente categoría.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+                duration_ms = int((time.monotonic() - section_started) * 1000)
+                section_stats.append(
+                    SectionStats(
+                        key=section.key,
+                        name=section.name,
+                        url=_collection_url(section, 1),
+                        pages_visited=section_pages,
+                        cards_seen=section_cards,
+                        unique_products=len(section_products),
+                        duplicates_removed=section_duplicates,
+                        duration_ms=duration_ms,
+                        status=status,
+                        error_message=error_message,
+                        structural_warning=structural_warning,
+                        performance_ms=metrics.as_dict(),
+                    )
                 )
 
-            duration_ms = int((time.monotonic() - section_started) * 1000)
-            section_stats.append(
-                SectionStats(
-                    key=section.key,
-                    name=section.name,
-                    url=f"{BASE_URL}/collections/{section.handle}",
-                    pages_visited=section_pages,
-                    cards_seen=section_cards,
-                    unique_products=len(section_products),
-                    duplicates_removed=section_duplicates,
-                    duration_ms=duration_ms,
-                    status=status,
-                    error_message=error_message,
-                    structural_warning=structural_warning,
-                    performance_ms=metrics.as_dict(),
-                )
+            if not all_products:
+                raise RuntimeError("Tost no entregó productos en ninguna categoría.")
+
+            for section in section_stats:
+                for name, value in section.performance_ms.items():
+                    aggregate.add(name, value)
+            aggregate.add("collector_total", int((time.monotonic() - started) * 1000))
+            aggregate.add("blocked_requests", block_stats.blocked_requests)
+            succeeded = sum(item.status == "success" for item in section_stats)
+            failed = len(section_stats) - succeeded
+            warnings = sum(item.structural_warning for item in section_stats)
+            health_status, health_score = _health(section_stats, len(all_products))
+            products = sorted(all_products.values(), key=lambda item: item.name.casefold())
+            print(
+                f"Resumen Tost: categorías={len(CATALOG_SECTIONS)}, correctas={succeeded}, "
+                f"fallidas={failed}, páginas={pages_visited}, tarjetas={cards_seen}, "
+                f"duplicados={duplicates_removed}, productos_únicos={len(products)}, "
+                f"salud={health_status}({health_score})",
+                flush=True,
             )
-    finally:
-        client.close()
-
-    if not all_products:
-        raise RuntimeError("Tost no entregó productos en ninguna colección.")
-
-    for section in section_stats:
-        for name, value in section.performance_ms.items():
-            aggregate.add(name, value)
-    aggregate.add("collector_total", int((time.monotonic() - started) * 1000))
-    succeeded = sum(item.status == "success" for item in section_stats)
-    failed = len(section_stats) - succeeded
-    warnings = sum(item.structural_warning for item in section_stats)
-    health_status, health_score = _health(section_stats, len(all_products))
-    if len(all_products) < MIN_PLAUSIBLE_PRODUCTS:
-        warnings += 1
-        print(
-            f"⚠ Tost: cobertura inverosímil ({len(all_products)} productos; "
-            f"mínimo esperado={MIN_PLAUSIBLE_PRODUCTS}). Estado forzado a BROKEN.",
-            file=sys.stderr,
-            flush=True,
-        )
-    products = sorted(all_products.values(), key=lambda item: item.name.casefold())
-    print(
-        f"Resumen Tost: categorías={len(CATALOG_SECTIONS)}, correctas={succeeded}, "
-        f"fallidas={failed}, páginas={pages_visited}, tarjetas={cards_seen}, "
-        f"duplicados={duplicates_removed}, productos_únicos={len(products)}, "
-        f"salud={health_status}({health_score})",
-        flush=True,
-    )
-    return CollectionBatch(
-        products=products,
-        stats=CollectionStats(
-            pages_visited=pages_visited,
-            cards_seen=cards_seen,
-            unique_products=len(products),
-            sections_discovered=len(CATALOG_SECTIONS),
-            sections_visited=len(section_stats),
-            sections_succeeded=succeeded,
-            sections_failed=failed,
-            duplicates_removed=duplicates_removed,
-            discovery_source="configured-html-collections-rate-limited-pagination",
-            health_status=health_status,
-            health_score=health_score,
-            structural_warnings=warnings,
-            section_stats=tuple(section_stats),
-            performance_ms=aggregate.as_dict(),
-        ),
-    )
+            return CollectionBatch(
+                products=products,
+                stats=CollectionStats(
+                    pages_visited=pages_visited,
+                    cards_seen=cards_seen,
+                    unique_products=len(products),
+                    sections_discovered=len(CATALOG_SECTIONS),
+                    sections_visited=len(section_stats),
+                    sections_succeeded=succeeded,
+                    sections_failed=failed,
+                    duplicates_removed=duplicates_removed,
+                    discovery_source="configured-playwright-rendered-collections",
+                    health_status=health_status,
+                    health_score=health_score,
+                    structural_warnings=warnings,
+                    section_stats=tuple(section_stats),
+                    performance_ms=aggregate.as_dict(),
+                ),
+            )
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+            browser.close()
 
 
 class TostCollector:
@@ -641,7 +586,7 @@ class TostCollector:
         slug="tost",
         base_url="https://tost.cl/",
         connector_key="tost",
-        requires_browser=False,
+        requires_browser=True,
     )
     key = metadata.connector_key
     store_name = metadata.name

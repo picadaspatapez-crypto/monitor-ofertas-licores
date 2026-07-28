@@ -44,7 +44,7 @@ CATALOG_SECTIONS: tuple[CatalogSection, ...] = (
     CatalogSection("vodka", "Vodka", "/vodka"),
     CatalogSection("ron", "Ron", "/ron"),
     CatalogSection("licores", "Licores", "/licores"),
-    CatalogSection("tequila", "Tequila", "/tequila"),
+    CatalogSection("tequila", "Tequila", "/licores/tequila"),
     CatalogSection("vinos", "Vinos", "/vinos"),
     CatalogSection("espumantes", "Espumantes", "/espumantes"),
     CatalogSection("cervezas", "Cervezas", "/cervezas"),
@@ -126,8 +126,17 @@ def _category_url(
     *,
     origin: str = BASE_URL,
 ) -> str:
-    query = urlencode({"page": page})
-    return f"{origin.rstrip('/')}{section.path}?{query}"
+    """Build Jumpseller category URLs.
+
+    GradoÚnico returns 404 for ``?page=1`` from some edge locations even
+    though the bare category URL is valid. Later pages accept the normal
+    pagination query. A stable sorting value avoids edge-cache variants.
+    """
+    base = f"{origin.rstrip('/')}{section.path}"
+    if page <= 1:
+        return base
+    query = urlencode({"page": page, "sorting": "position-asc"})
+    return f"{base}?{query}"
 
 
 def _probe_session() -> requests.Session:
@@ -166,8 +175,9 @@ def _select_origin() -> str:
     The store occasionally accepts residential/search-engine traffic while timing
     out from cloud providers.  Probing both the ``www`` and apex hosts before
     iterating eleven categories prevents a 10+ minute chain of identical TCP
-    timeouts.  Any HTTP response proves that the TCP/TLS origin is reachable;
-    category requests still validate their own status codes afterwards.
+    timeouts. The probe uses a real category and only accepts a successful
+    or redirected response, preventing an unrelated 404 from being treated
+    as a healthy storefront.
     """
 
     failures: list[str] = []
@@ -175,7 +185,7 @@ def _select_origin() -> str:
     try:
         for origin in REQUEST_ORIGINS:
             ensure_budget("preflight de GradoÚnico")
-            probe_url = f"{origin.rstrip('/')}/api/mcp/llms.txt"
+            probe_url = f"{origin.rstrip('/')}/whisky"
             started = time.monotonic()
             try:
                 response = session.get(
@@ -191,7 +201,11 @@ def _select_origin() -> str:
                     f"HTTP={response.status_code}, duración={elapsed:.1f}s.",
                     flush=True,
                 )
-                return origin
+                if 200 <= response.status_code < 400:
+                    return origin
+                failures.append(
+                    f"{origin}: HTTP {response.status_code} en /whisky tras {elapsed:.1f}s"
+                )
             except requests.RequestException as exc:
                 elapsed = time.monotonic() - started
                 detail = f"{origin}: {type(exc).__name__} tras {elapsed:.1f}s"
@@ -221,9 +235,13 @@ def _is_product_url(raw_url: str) -> bool:
     if parsed.netloc.casefold() not in {"gradounico.cl", "www.gradounico.cl"}:
         return False
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) != 1:
+    if len(parts) == 1:
+        slug = parts[0]
+    elif len(parts) == 2 and parts[0].casefold() == "tienda":
+        slug = parts[1]
+    else:
         return False
-    return parts[0].casefold() not in _EXCLUDED_PATHS and len(parts[0]) > 2
+    return slug.casefold() not in _EXCLUDED_PATHS and len(slug) > 2
 
 
 def _price_values(text: str) -> list[int]:
