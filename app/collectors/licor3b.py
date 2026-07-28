@@ -46,6 +46,10 @@ PRODUCT_SELECTOR = (
 )
 CATEGORY_SELECTOR = "a[href*='/product-category/']"
 
+# Categorías promocionales o internas que no deben formar parte del catálogo.
+# "Adiós Gabriel" actualmente usa el slug /product-category/mascomprados/.
+EXCLUDED_DISCOVERED_SECTION_KEYS = frozenset({"mascomprados"})
+
 
 @dataclass(frozen=True)
 class CatalogSection:
@@ -102,7 +106,7 @@ def _discover_sections_from_html(html: str) -> tuple[CatalogSection, ...]:
             # Evita subcategorías: solo categorías raíz para no multiplicar duplicados.
             continue
         key = match.group(1).casefold()
-        if key in {"uncategorized", "sin-categoria"}:
+        if key in {"uncategorized", "sin-categoria"} or key in EXCLUDED_DISCOVERED_SECTION_KEYS:
             continue
         visible_name = " ".join(link.get_text(" ", strip=True).split())
         if not visible_name or len(visible_name) > 60:

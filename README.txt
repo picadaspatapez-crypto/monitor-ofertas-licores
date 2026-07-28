@@ -1,8 +1,10 @@
-HOTFIX v4.4.2
+Hotfix acumulativo v5.1.10 para repositorios en v5.1.8.
 
-Reemplaza estos dos archivos en la raíz del repositorio:
+Reemplazar:
+- app/collectors/elmundodelvino.py
+- app/collectors/licor3b.py
 - app/version.py
-- __init__.py
 
-Luego haz commit y espera el nuevo deployment de Railway.
-No hay migraciones ni variables nuevas.
+Incluye:
+- v5.1.9: colecciones válidas de El Mundo del Vino.
+- v5.1.10: exclusión de Licor3B "Adiós Gabriel" (slug mascomprados).

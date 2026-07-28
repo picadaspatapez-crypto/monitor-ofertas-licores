@@ -41,12 +41,14 @@ class CatalogSection:
     handle: str
 
 
+# Colecciones públicas verificadas. No se incluye ``cervezas`` porque el
+# handle /collections/cervezas responde 404 y generaba una incidencia falsa
+# aun cuando el resto del catálogo se recopilaba correctamente.
 CATALOG_SECTIONS: tuple[CatalogSection, ...] = (
     CatalogSection("licores", "Licores", "licores"),
     CatalogSection("whisky", "Whisky", "whisky"),
     CatalogSection("vinos", "Vinos", "vinos"),
     CatalogSection("espumantes", "Espumantes", "espumantes"),
-    CatalogSection("cervezas", "Cervezas", "cervezas"),
 )
 
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
