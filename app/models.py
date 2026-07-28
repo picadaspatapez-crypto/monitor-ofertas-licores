@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -238,3 +239,65 @@ class TelegramBotState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class TelegramFavorite(Base):
+    """Producto seguido por un chat autorizado de Telegram."""
+
+    __tablename__ = "telegram_favorites"
+    __table_args__ = (
+        UniqueConstraint(
+            "chat_id",
+            "master_product_id",
+            name="uq_telegram_favorite_chat_master",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    master_product_id: Mapped[int] = mapped_column(
+        ForeignKey("master_products.id"), index=True
+    )
+    target_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notify_on_price_drop: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_on_new_store: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_on_winner_change: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_on_back_in_stock: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+    # Estado de la última evaluación. Se usa para detectar cambios sin repetir avisos.
+    last_best_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_winner_store: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    last_store_names: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    was_available: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class FavoriteAlert(Base):
+    """Cola persistente de alertas personalizadas de favoritos."""
+
+    __tablename__ = "favorite_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    favorite_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_favorites.id"), index=True
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    event_types: Mapped[list] = mapped_column(JSON, default=list)
+    run_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    deduplication_key: Mapped[str] = mapped_column(String(255), unique=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), index=True)
+    message: Mapped[str] = mapped_column(Text)
+    current_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    winner_store: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -1,5 +1,5 @@
 """Application release metadata."""
 
-APP_VERSION = "4.7.0"
+APP_VERSION = "4.8.0"
 __version__ = APP_VERSION
-RELEASE_NAME = "Interactive Telegram Search Bot"
+RELEASE_NAME = "Favorites & Personalized Alerts"

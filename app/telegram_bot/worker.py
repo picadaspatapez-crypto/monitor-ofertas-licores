@@ -7,12 +7,25 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from app.models import MasterProduct, Product
+from app.favorites import (
+    add_or_update_favorite,
+    deactivate_favorite,
+    list_favorites,
+    resolve_favorite_query,
+)
+from app.models import MasterProduct, Product, TelegramFavorite
 from app.search.web import SearchApplication
 from app.telegram_bot.api import TelegramAPI, TelegramAPIError
 from app.telegram_bot.commands import BotCommand, parse_command
 from app.telegram_bot.config import TelegramBotSettings
 from app.telegram_bot.formatting import (
+    favorite_delete_help_message,
+    favorite_help_message,
+    favorite_target_help_message,
+    format_favorite_deleted,
+    format_favorite_resolution_error,
+    format_favorite_saved,
+    format_favorites_list,
     format_search_results,
     help_message,
     search_help_message,
@@ -65,7 +78,7 @@ class TelegramSearchBot:
             reply_markup=reply_markup,
         )
 
-    def _catalog_status(self) -> tuple[int, int, datetime | None]:
+    def _catalog_status(self, chat_id: int) -> tuple[int, int, datetime | None, int]:
         cutoff = datetime.now(timezone.utc) - timedelta(
             hours=self.settings.max_age_hours
         )
@@ -88,9 +101,18 @@ class TelegramSearchBot:
                 or 0
             )
             latest_seen_at = session.scalar(select(func.max(Product.last_seen_at)))
+            favorite_count = int(
+                session.scalar(
+                    select(func.count(TelegramFavorite.id)).where(
+                        TelegramFavorite.chat_id == chat_id,
+                        TelegramFavorite.is_active.is_(True),
+                    )
+                )
+                or 0
+            )
         if latest_seen_at is not None and latest_seen_at.tzinfo is None:
             latest_seen_at = latest_seen_at.replace(tzinfo=timezone.utc)
-        return active_masters, fresh_products, latest_seen_at
+        return active_masters, fresh_products, latest_seen_at, favorite_count
 
     def _handle_command(
         self,
@@ -114,7 +136,7 @@ class TelegramSearchBot:
             )
             return
         if command.name == "status":
-            active, fresh, latest = self._catalog_status()
+            active, fresh, latest, favorites = self._catalog_status(chat_id)
             self._send(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -123,8 +145,90 @@ class TelegramSearchBot:
                     fresh_products=fresh,
                     latest_seen_at=latest,
                     max_age_hours=self.settings.max_age_hours,
+                    favorites=favorites,
                 ),
             )
+            return
+        if command.name == "favorite_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=favorite_help_message(),
+            )
+            return
+        if command.name == "favorite_target_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=favorite_target_help_message(),
+            )
+            return
+        if command.name == "favorite_delete_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=favorite_delete_help_message(),
+            )
+            return
+        if command.name in {"favorite_add", "favorite_target"}:
+            try:
+                with self.application.SessionLocal() as session:
+                    resolution = resolve_favorite_query(
+                        session,
+                        command.query,
+                        max_age_hours=self.settings.max_age_hours,
+                    )
+                    if resolution.result is None:
+                        text = format_favorite_resolution_error(command.query, resolution)
+                    else:
+                        favorite, created = add_or_update_favorite(
+                            session,
+                            chat_id=chat_id,
+                            result=resolution.result,
+                            target_price=(
+                                command.value if command.name == "favorite_target" else None
+                            ),
+                        )
+                        session.commit()
+                        text = format_favorite_saved(
+                            result=resolution.result,
+                            favorite_id=int(favorite.id),
+                            created=created,
+                            target_price=favorite.target_price,
+                        )
+            except Exception as exc:
+                print(f"BOT favorite error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude guardar el favorito en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "favorite_list":
+            try:
+                with self.application.SessionLocal() as session:
+                    views = list_favorites(
+                        session,
+                        chat_id=chat_id,
+                        max_age_hours=self.settings.max_age_hours,
+                    )
+                text = format_favorites_list(views)
+            except Exception as exc:
+                print(f"BOT favorite list error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar tus favoritos en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "favorite_delete":
+            try:
+                with self.application.SessionLocal() as session:
+                    deleted = deactivate_favorite(
+                        session,
+                        chat_id=chat_id,
+                        favorite_id=int(command.value or 0),
+                    )
+                    session.commit()
+                text = format_favorite_deleted(int(command.value or 0), deleted)
+            except Exception as exc:
+                print(f"BOT favorite delete error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude eliminar el favorito en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
         if command.name == "search":
             try:

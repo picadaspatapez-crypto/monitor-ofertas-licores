@@ -4,6 +4,7 @@ import html
 from datetime import datetime
 from typing import Any
 
+from app.favorites.service import FavoriteResolution, FavoriteView
 from app.search.engine import SearchResult
 from app.search.formatting import format_clp, format_datetime_cl
 
@@ -18,11 +19,13 @@ def help_message(bot_username: str | None = None) -> str:
         f"🍾 <b>Buscador de licores</b>\n\n"
         f"Escríbele directamente a {mention} el nombre de un producto o usa:\n"
         f"<code>/buscar johnnie black 750</code>\n\n"
-        f"También puedes probar:\n"
-        f"• <code>jack honey</code>\n"
-        f"• <code>mistral 35 1 litro</code>\n"
-        f"• <code>etiqueta negra 750</code>\n\n"
-        f"El bot consulta la última revisión guardada en PostgreSQL; no abre las tiendas en cada búsqueda."
+        f"⭐ <b>Favoritos y avisos</b>\n"
+        f"<code>/favorito johnnie black 750</code>\n"
+        f"<code>/avisar johnnie black 750 bajo 25000</code>\n"
+        f"<code>/misfavoritos</code>\n"
+        f"<code>/eliminarfavorito 3</code>\n\n"
+        f"Otros comandos: <code>/estado</code> y <code>/ayuda</code>.\n\n"
+        f"El bot consulta PostgreSQL; no abre las tiendas en cada búsqueda."
     )
 
 
@@ -30,6 +33,28 @@ def search_help_message() -> str:
     return (
         "Escribe el producto después del comando.\n\n"
         "Ejemplo: <code>/buscar johnnie black 750</code>"
+    )
+
+
+def favorite_help_message() -> str:
+    return (
+        "⭐ Escribe el producto que quieres seguir.\n\n"
+        "Ejemplo: <code>/favorito johnnie black 750</code>\n\n"
+        "Te avisaré si baja, aparece en una tienda nueva, cambia la tienda más barata o vuelve a estar disponible."
+    )
+
+
+def favorite_target_help_message() -> str:
+    return (
+        "🎯 Indica un producto y el precio objetivo.\n\n"
+        "Ejemplo: <code>/avisar johnnie black 750 bajo 25000</code>"
+    )
+
+
+def favorite_delete_help_message() -> str:
+    return (
+        "Usa el número mostrado por <code>/misfavoritos</code>.\n\n"
+        "Ejemplo: <code>/eliminarfavorito 3</code>"
     )
 
 
@@ -50,12 +75,14 @@ def status_message(
     fresh_products: int,
     latest_seen_at: datetime | None,
     max_age_hours: int,
+    favorites: int = 0,
 ) -> str:
     latest = format_datetime_cl(latest_seen_at) if latest_seen_at else "sin datos"
     return (
         "📊 <b>Estado del catálogo</b>\n\n"
         f"Productos unificados: <b>{active_masters}</b>\n"
         f"Publicaciones vigentes: <b>{fresh_products}</b>\n"
+        f"Tus favoritos activos: <b>{favorites}</b>\n"
         f"Última observación: <b>{_escape(latest)}</b>\n"
         f"Ventana de vigencia: <b>{max_age_hours} horas</b>"
     )
@@ -116,7 +143,7 @@ def format_search_results(
         [
             "",
             "🕒 Precios de la última revisión disponible.",
-            "Refina la búsqueda indicando marca, variante o volumen si aparecen varias opciones.",
+            "Para seguir uno usa /favorito seguido del nombre completo.",
         ]
     )
     text = "\n".join(lines)
@@ -124,3 +151,81 @@ def format_search_results(
         text = text[:3970].rstrip() + "\n…"
     markup = {"inline_keyboard": keyboard} if keyboard else None
     return text, markup
+
+
+def _alternatives_lines(resolution: FavoriteResolution) -> list[str]:
+    lines = ["Encontré varias opciones. Especifica mejor la variante o el volumen:", ""]
+    for index, item in enumerate(resolution.alternatives, start=1):
+        detail = f" · {item.volume_ml} ml" if item.volume_ml else ""
+        lines.append(f"{index}. {_escape(item.canonical_name)}{detail}")
+    return lines
+
+
+def format_favorite_resolution_error(query: str, resolution: FavoriteResolution) -> str:
+    if resolution.status == "not_found":
+        return no_results_message(query)
+    return "\n".join(_alternatives_lines(resolution))
+
+
+def format_favorite_saved(
+    *,
+    result: SearchResult,
+    favorite_id: int,
+    created: bool,
+    target_price: int | None,
+) -> str:
+    action = "guardado" if created else "actualizado"
+    lines = [
+        f"⭐ Favorito {action}",
+        "",
+        f"<b>{_escape(result.canonical_name)}</b>",
+        f"ID: <code>{favorite_id}</code>",
+        f"Precio actual: <b>{format_clp(result.winner.price)}</b> en {_escape(result.winner.store_name)}",
+    ]
+    if target_price is not None:
+        lines.append(f"🎯 Objetivo: <b>{format_clp(target_price)}</b>")
+        if result.winner.price <= target_price:
+            lines.append("✅ El precio actual ya cumple tu objetivo.")
+    lines.extend(
+        [
+            "",
+            "Te avisaré por bajas, tienda nueva, cambio de ganador y reposición.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def format_favorites_list(views: list[FavoriteView]) -> str:
+    if not views:
+        return (
+            "⭐ No tienes favoritos activos.\n\n"
+            "Agrega uno con <code>/favorito nombre del producto</code>."
+        )
+    lines = ["⭐ <b>Mis favoritos</b>", ""]
+    for view in views:
+        details = []
+        if view.volume_ml:
+            details.append(f"{view.volume_ml} ml")
+        if view.target_price is not None:
+            details.append(f"objetivo {format_clp(view.target_price)}")
+        suffix = f" · {' · '.join(details)}" if details else ""
+        lines.append(f"<b>{view.favorite_id}.</b> {_escape(view.canonical_name)}{suffix}")
+        if view.snapshot.winner is not None:
+            lines.append(
+                f"   🥇 {_escape(view.snapshot.winner.store_name)}: "
+                f"<b>{format_clp(view.snapshot.winner.price)}</b>"
+            )
+        else:
+            lines.append("   Sin disponibilidad reciente")
+        lines.append("")
+    lines.append("Eliminar: <code>/eliminarfavorito ID</code>")
+    return "\n".join(lines)[:4000]
+
+
+def format_favorite_deleted(favorite_id: int, deleted: bool) -> str:
+    if deleted:
+        return f"🗑️ Favorito <b>{favorite_id}</b> eliminado."
+    return (
+        f"No encontré un favorito activo con ID <b>{favorite_id}</b>.\n"
+        "Consulta <code>/misfavoritos</code>."
+    )

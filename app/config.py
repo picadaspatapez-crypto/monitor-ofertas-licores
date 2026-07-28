@@ -64,6 +64,8 @@ class Settings:
     cross_store_match_min_confidence: float
     telegram_comparison_limit: int
     telegram_winner_change_limit: int
+    favorite_min_drop_clp: int
+    favorite_alert_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -92,5 +94,11 @@ class Settings:
             ),
             telegram_winner_change_limit=_positive_int(
                 "TELEGRAM_WINNER_CHANGE_LIMIT", 10
+            ),
+            favorite_min_drop_clp=_non_negative_int(
+                "FAVORITE_MIN_DROP_CLP", 1
+            ),
+            favorite_alert_limit=_positive_int(
+                "FAVORITE_ALERT_LIMIT", 20
             ),
         )

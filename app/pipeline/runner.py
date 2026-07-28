@@ -10,6 +10,7 @@ from app.collectors.base import Collector
 from app.collectors.registry import enabled_collectors
 from app.config import Settings
 from app.database import Base, create_database
+from app.favorites import deliver_pending_favorite_alerts, evaluate_favorite_alerts
 from app.models import ScrapeRun, Store
 from app.notifications import (
     ComparisonAlertContext,
@@ -48,6 +49,7 @@ class CollectorExecution:
     error_message: str | None = None
     store_id: int | None = None
     run_id: int | None = None
+    health_status: str | None = None
 
 
 def _metrics_dict(stats, previous_count: int | None) -> dict:
@@ -379,6 +381,7 @@ def _run_collector(
             products_found=len(collected),
             store_id=store_id,
             run_id=run_id,
+            health_status=final_stats.health_status,
         )
 
     except Exception as exc:
@@ -534,6 +537,61 @@ def _refresh_search_catalog_stage(*, SessionLocal) -> None:
         )
 
 
+def _run_favorite_alert_stage(
+    *,
+    SessionLocal,
+    settings: Settings,
+    results: list[CollectorExecution],
+) -> None:
+    complete = bool(results) and all(
+        result.success
+        and result.run_id is not None
+        and result.products_found > 0
+        and result.health_status == "HEALTHY"
+        for result in results
+    )
+    if not complete:
+        print(
+            "Favoritos: evaluación omitida porque la cobertura no fue completa o algún collector no quedó HEALTHY.",
+            flush=True,
+        )
+        return
+
+    run_ids = tuple(sorted(int(result.run_id) for result in results if result.run_id))
+    started = time.monotonic()
+    try:
+        with SessionLocal() as session:
+            evaluated, queued = evaluate_favorite_alerts(
+                session,
+                run_ids=run_ids,
+                coverage_complete=True,
+                minimum_drop_clp=settings.favorite_min_drop_clp,
+            )
+            session.commit()
+
+        sent, failed = deliver_pending_favorite_alerts(
+            SessionLocal=SessionLocal,
+            telegram_bot_token=settings.telegram_bot_token,
+            send_message_fn=send_message,
+            limit=settings.favorite_alert_limit,
+        )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        print(
+            "FAVORITOS PERSONALIZADOS · "
+            f"evaluados={evaluated}, encolados={queued}, "
+            f"enviados={sent}, fallidos={failed}, "
+            f"duración={elapsed_ms / 1000:.1f}s.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"⚠ Favoritos: no se pudo evaluar o enviar alertas: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def run_pipeline() -> int:
     settings = Settings.from_env()
     performance = PerformanceSettings.from_env()
@@ -565,6 +623,13 @@ def run_pipeline() -> int:
         "Comparador cross-store: "
         f"confianza ≥ {settings.cross_store_match_min_confidence:.0%}; "
         f"top={settings.telegram_comparison_limit}; packs excluidos.",
+        flush=True,
+    )
+    print(
+        "Favoritos personalizados: "
+        f"baja mínima=${settings.favorite_min_drop_clp:,}; "
+        f"máximo={settings.favorite_alert_limit} avisos por ejecución."
+        .replace(",", "."),
         flush=True,
     )
 
@@ -605,6 +670,11 @@ def run_pipeline() -> int:
 
     _run_cross_store_stage(SessionLocal=SessionLocal, settings=settings, results=results)
     _refresh_search_catalog_stage(SessionLocal=SessionLocal)
+    _run_favorite_alert_stage(
+        SessionLocal=SessionLocal,
+        settings=settings,
+        results=results,
+    )
 
     total_collectors = len(collectors)
     failures = sum(not result.success for result in results)
