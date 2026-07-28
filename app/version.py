@@ -1,5 +1,5 @@
 """Application release metadata."""
 
-APP_VERSION = "5.1.3"
+APP_VERSION = "5.1.4"
 __version__ = APP_VERSION
-RELEASE_NAME = "Replacement Stores: El Mundo del Vino & Comercial JP"
+RELEASE_NAME = "El Mundo del Vino Shopify URL & Metrics Fix"

@@ -90,6 +90,11 @@ class PhaseMetrics:
     def add(self, name: str, elapsed_ms: int) -> None:
         self.values_ms[name] = self.values_ms.get(name, 0) + max(0, int(elapsed_ms))
 
+    def merge(self, other: "PhaseMetrics") -> None:
+        """Acumula las fases de otra medición sin compartir su diccionario interno."""
+        for name, elapsed_ms in other.values_ms.items():
+            self.add(name, elapsed_ms)
+
     def as_dict(self) -> dict[str, int]:
         return dict(self.values_ms)
 

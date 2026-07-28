@@ -38,7 +38,6 @@ CATALOG_SECTIONS: tuple[CatalogSection, ...] = (
 )
 
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
-_PRODUCT_PATH_RE = re.compile(r"^/products/[^/?#]+/?$", re.IGNORECASE)
 
 
 def _session() -> requests.Session:
@@ -74,9 +73,31 @@ def _fold(value: str) -> str:
     return _normalize_text(value).casefold()
 
 
-def _canonical_url(raw_url: str) -> str:
+def _product_slug(raw_url: str) -> str | None:
+    """Acepta URLs Shopify directas y URLs con prefijo de colección."""
     parsed = urlparse(urljoin(BASE_URL, raw_url))
-    path = re.sub(r"/+", "/", parsed.path).rstrip("/")
+    if parsed.netloc.casefold() not in {"elmundodelvino.cl", "www.elmundodelvino.cl"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    try:
+        product_index = next(index for index, part in enumerate(parts) if part.casefold() == "products")
+    except StopIteration:
+        return None
+    if product_index + 1 >= len(parts):
+        return None
+    slug = parts[product_index + 1].strip()
+    if not slug or slug.casefold() in {"search", "all"}:
+        return None
+    return slug
+
+
+def _canonical_url(raw_url: str) -> str:
+    slug = _product_slug(raw_url)
+    if slug is None:
+        parsed = urlparse(urljoin(BASE_URL, raw_url))
+        path = re.sub(r"/+", "/", parsed.path).rstrip("/")
+    else:
+        path = f"/products/{slug}"
     return urlunparse(("https", "elmundodelvino.cl", path, "", "", ""))
 
 
@@ -88,10 +109,7 @@ def _category_url(section: CatalogSection, page: int) -> str:
 
 
 def _is_product_url(raw_url: str) -> bool:
-    parsed = urlparse(urljoin(BASE_URL, raw_url))
-    return parsed.netloc.casefold() in {"elmundodelvino.cl", "www.elmundodelvino.cl"} and bool(
-        _PRODUCT_PATH_RE.fullmatch(parsed.path)
-    )
+    return _product_slug(raw_url) is not None
 
 
 def _price_values(text: str) -> list[int]:
@@ -130,6 +148,13 @@ def _candidate_card(link: Tag) -> Tag:
     return candidate
 
 
+def _clean_product_name(value: str) -> str:
+    value = _normalize_text(value)
+    value = re.sub(r"^(?:agotado|oferta\s+\d+%|agregar al carro)\s+", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+\$\s*[\d.]+(?:\s+\$\s*[\d.]+)?\s*$", "", value)
+    return value.strip(" -–—")
+
+
 def _name_from_card(card: Tag, link: Tag) -> str:
     for selector in (
         ".card__heading", ".product-card__title", ".product-item__title",
@@ -137,10 +162,10 @@ def _name_from_card(card: Tag, link: Tag) -> str:
     ):
         node = card.select_one(selector)
         if isinstance(node, Tag):
-            value = _normalize_text(node.get_text(" ", strip=True))
+            value = _clean_product_name(node.get_text(" ", strip=True))
             if len(value) >= 3:
                 return value
-    return _normalize_text(link.get_text(" ", strip=True))
+    return _clean_product_name(link.get_text(" ", strip=True))
 
 
 def _parse_html(html: str, section_name: str) -> tuple[dict[str, CollectedProduct], int]:
