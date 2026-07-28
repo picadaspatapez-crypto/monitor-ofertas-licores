@@ -1,3 +1,7 @@
+import requests
+import pytest
+
+import app.collectors.gradounico as gradounico
 from app.collectors.gradounico import _parse_html
 
 
@@ -25,6 +29,20 @@ def test_gradounico_parses_static_product_cards():
     assert product.url == "https://www.gradounico.cl/gin-bombay-sapphire-750cc"
 
 
+def test_gradounico_parses_legacy_tienda_product_path():
+    html = """
+    <article>
+      <a href="/tienda/whisky-ballantines-10-anos-750cc">
+        <h2>Whisky Ballantines 10 Años 750cc</h2>
+      </a>
+      <span>$14.990</span><button>Agregar al Carro</button>
+    </article>
+    """
+    products, cards = _parse_html(html, "Whisky")
+    assert cards == 1
+    assert len(products) == 1
+
+
 def test_gradounico_rejects_navigation_headings():
     html = """
     <section><h2>Categorías</h2><a href="/gin">Gin</a></section>
@@ -34,22 +52,22 @@ def test_gradounico_rejects_navigation_headings():
     assert products == {}
     assert cards == 0
 
-import requests
-import pytest
 
-import app.collectors.gradounico as gradounico
-
-
-def test_gradounico_category_url_supports_alternate_origin():
+def test_gradounico_first_page_omits_page_query_and_later_pages_sort_stably():
     section = gradounico.CatalogSection("whisky", "Whisky", "/whisky")
     assert (
-        gradounico._category_url(
-            section,
-            3,
-            origin="https://gradounico.cl",
-        )
-        == "https://gradounico.cl/whisky?page=3"
+        gradounico._category_url(section, 1, origin="https://gradounico.cl")
+        == "https://gradounico.cl/whisky"
     )
+    assert (
+        gradounico._category_url(section, 3, origin="https://gradounico.cl")
+        == "https://gradounico.cl/whisky?page=3&sorting=position-asc"
+    )
+
+
+def test_gradounico_tequila_uses_nested_official_route():
+    tequila = next(item for item in gradounico.CATALOG_SECTIONS if item.key == "tequila")
+    assert tequila.path == "/licores/tequila"
 
 
 def test_gradounico_circuit_breaker_stops_after_two_tcp_failures(monkeypatch):

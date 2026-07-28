@@ -8,7 +8,7 @@ from app.domain import CollectionBatch
 def test_enabled_collectors_have_unique_valid_metadata():
     collectors = enabled_collectors()
     assert collectors
-    assert {item.key for item in collectors} == {"licor3b", "liquidos", "tost", "gradounico"}
+    assert {item.key for item in collectors} == {"licor3b", "liquidos", "elmundodelvino", "comercialjp"}
     assert len({item.key for item in collectors}) == len(collectors)
     assert len({item.metadata.slug for item in collectors}) == len(collectors)
     assert all(item.key == item.metadata.connector_key for item in collectors)
