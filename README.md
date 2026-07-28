@@ -1,4 +1,4 @@
-# Monitor de Ofertas de Licores — v5.1.0
+# Monitor de Ofertas de Licores — v5.1.2
 
 Plataforma chilena multi-tienda para recolectar precios, comparar productos equivalentes,
 buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
@@ -10,10 +10,10 @@ buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
 - Tost
 - GradoÚnico
 
-## Novedades de v5.1
+## Novedades de v5.1.2
 
-- Tost recorre las páginas HTML normales de sus colecciones.
-- La paginación se descubre automáticamente y se descargan hasta tres páginas Tost a la vez.
+- Tost usa Playwright para esperar el catálogo dinámico real y excluir el carrusel repetido de 11 recomendaciones.
+- La paginación se descubre sobre el DOM renderizado y se recorre secuencialmente.
 - Un resultado Tost inferior a 50 productos se considera incompleto y queda `BROKEN`.
 - Las capturas `BROKEN` no se guardan, por lo que se conserva el último catálogo confiable.
 - Cada collector dispone de un máximo predeterminado de 25 minutos.
@@ -34,7 +34,7 @@ Postgres
           web /buscar + API + bot Telegram permanente
 ```
 
-Licor3B y Líquidos utilizan Playwright. Tost y GradoÚnico utilizan HTTP directo.
+Licor3B, Líquidos y Tost utilizan Playwright. GradoÚnico utiliza HTTP directo.
 No se crea un servicio nuevo ni se cambia GradoÚnico de región.
 
 ## Límite por tienda
@@ -50,7 +50,7 @@ scroll y solicitudes HTTP.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.1.md`](DEPLOY_V5.1.md).
+Consulta [`DEPLOY_V5.1.2.md`](DEPLOY_V5.1.2.md).
 
 No hay una migración nueva. El head de Alembic continúa en
 `0007_telegram_favorites`.
@@ -75,3 +75,7 @@ pip install -r requirements-search.txt
 ```bash
 PYTHONPATH=. python -m pytest
 ```
+
+## Tiendas activas en v5.1.3
+
+Licor3B, Líquidos, El Mundo del Vino y Comercial JP. Tost y GradoÚnico permanecen deshabilitados para diagnóstico futuro.

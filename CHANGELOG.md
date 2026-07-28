@@ -1,4 +1,24 @@
+## v5.1.2 — Tost Browser & GradoÚnico Route Fix
+
+- Cambia Tost a Playwright para esperar el catálogo dinámico real.
+- Prioriza el grid principal y excluye el carrusel repetido de 11 recomendaciones.
+- Descubre paginación desde el DOM renderizado y mantiene el límite de 25 minutos.
+- GradoÚnico abre la primera página sin `?page=1`, evitando respuestas 404 del edge.
+- Corrige la ruta oficial de Tequila a `/licores/tequila`.
+- El preflight de GradoÚnico valida una categoría real y rechaza respuestas 404.
+- Mantiene datos históricos cuando una captura queda incompleta.
+- Sin migraciones nuevas ni variables obligatorias.
+
 # Changelog
+
+## v5.1.1 — Tost Grid & Rate-Limit Fix
+
+- Corrige la selección del grid principal de Tost: ya no confunde la colección con el carrusel de 11 recomendaciones.
+- Sustituye las descargas paralelas de páginas Tost por paginación secuencial con ritmo adaptativo.
+- Respeta `Retry-After` y aplica backoff ante HTTP 429.
+- Detecta páginas idénticas consecutivas como posible fallo estructural.
+- Conserva el límite global de 25 minutos por tienda.
+- GradoÚnico mantiene su preflight y circuit breaker en la misma región.
 
 ## v5.1.0 — Stability Hardening & Bounded Collectors
 
@@ -86,3 +106,10 @@
 
 - Corrige el uso keyword-only de `arg` en `Page.wait_for_function`.
 - Mantiene la recolección paralela y las esperas adaptativas.
+
+## 5.1.3
+
+- Deshabilita Tost y GradoÚnico del registry activo tras fallos repetidos.
+- Añade collectors HTTP para El Mundo del Vino y Comercial JP.
+- Conserva límite de 25 minutos por tienda, matching, buscador, Telegram y favoritos.
+- Sin migraciones nuevas.
