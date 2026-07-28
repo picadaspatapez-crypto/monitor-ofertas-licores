@@ -1,4 +1,4 @@
-# Monitor de Ofertas de Licores — v5.0.0
+# Monitor de Ofertas de Licores — v5.1.0
 
 Plataforma chilena multi-tienda para recolectar precios, comparar productos equivalentes,
 buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
@@ -10,18 +10,16 @@ buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
 - Tost
 - GradoÚnico
 
-## Novedades de v5.0
+## Novedades de v5.1
 
-- Dos collectors nuevos: `TostCollector` y `GradoUnicoCollector`.
-- Cuatro tiendas ejecutándose en paralelo con un máximo seguro de cuatro workers.
-- Tost y GradoÚnico usan solicitudes HTTP directas; Licor3B y Líquidos conservan Playwright.
-- Matching corregido para asociar el mismo producto en tres o cuatro tiendas, no solo en un par.
-- Comparador y buscador muestran todas las ofertas disponibles por tienda.
-- Botones de Telegram organizados en filas de dos, con hasta cuatro tiendas por resultado.
-- Filtros adicionales para evitar mezclar botellas con packs, regalos o productos personalizados.
-- Resumen compacto obligatorio al terminar cada revisión, con el estado de todas las tiendas.
-- `/estado` informa la última ejecución, salud y cantidad de productos de cada collector.
-- Favoritos y precios objetivo funcionan sobre el catálogo conjunto de las cuatro tiendas.
+- Tost recorre las páginas HTML normales de sus colecciones.
+- La paginación se descubre automáticamente y se descargan hasta tres páginas Tost a la vez.
+- Un resultado Tost inferior a 50 productos se considera incompleto y queda `BROKEN`.
+- Las capturas `BROKEN` no se guardan, por lo que se conserva el último catálogo confiable.
+- Cada collector dispone de un máximo predeterminado de 25 minutos.
+- GradoÚnico permanece en el mismo servicio y región, con preflight y circuit breaker.
+- Railway solo marca el cron como fallido cuando ninguna tienda finaliza correctamente.
+- Matching, buscador, Telegram y favoritos continúan usando únicamente ejecuciones confiables.
 
 ## Arquitectura Railway
 
@@ -36,14 +34,25 @@ Postgres
           web /buscar + API + bot Telegram permanente
 ```
 
-Los collectors se ejecutan simultáneamente, pero únicamente Licor3B y Líquidos abren
-Chromium. Tost y GradoÚnico consultan catálogos HTTP, reduciendo el consumo de memoria.
+Licor3B y Líquidos utilizan Playwright. Tost y GradoÚnico utilizan HTTP directo.
+No se crea un servicio nuevo ni se cambia GradoÚnico de región.
+
+## Límite por tienda
+
+El valor predeterminado es 25 minutos:
+
+```env
+COLLECTOR_TIMEOUT_MINUTES=25
+```
+
+La variable es opcional. El límite se verifica durante navegación, paginación,
+scroll y solicitudes HTTP.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.0.md`](DEPLOY_V5.0.md).
+Consulta [`DEPLOY_V5.1.md`](DEPLOY_V5.1.md).
 
-No hay una migración nueva en esta versión. El head de Alembic continúa en
+No hay una migración nueva. El head de Alembic continúa en
 `0007_telegram_favorites`.
 
 ## Ejecución local

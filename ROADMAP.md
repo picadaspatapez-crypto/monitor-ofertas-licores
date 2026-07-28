@@ -8,12 +8,11 @@
 - **v4.7:** bot interactivo de Telegram.
 - **v4.8:** favoritos, precios objetivo y alertas personalizadas.
 - **v5.0:** Tost + GradoÚnico, cuatro tiendas y resumen global de ejecución.
+- **v5.1:** estabilización de Tost, límites de 25 minutos y ejecuciones parciales sin `Crashed`.
 
 ## Próximas versiones
 
-- **v5.1:** estabilización de los cuatro collectors con logs reales, ajuste de categorías,
-  selectores, cobertura y rendimiento.
-- **v5.2:** incorporar las tres siguientes candidatas acordadas:
-  El Mundo del Vino, Socomep y Comercial JP.
-- **Posterior:** evaluar CAV con precio de socio personalizado y separación explícita
-  entre precio público y precio asociado a membresía.
+- **v5.2:** La Barra, Donde La Negra y Distribuidora La Modelo.
+- **v5.3:** estabilización de las siete tiendas, cobertura, formatos, duplicados y rendimiento.
+- **v5.4:** El Mundo del Vino, Socomep y Comercial JP.
+- **Posterior:** evaluar CAV con precio de socio personalizado y separación explícita entre precio público y precio de membresía.

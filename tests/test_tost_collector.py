@@ -81,3 +81,50 @@ def test_tost_html_fallback_excludes_unit_price():
     product = next(iter(products.values()))
     assert product.current_price == 7490
     assert product.regular_price == 9990
+
+
+def test_tost_discovers_page_count_from_progress_and_links():
+    from app.collectors.tost import _discover_page_count
+
+    html = '''
+    <div>Mostrando 40 de 146</div>
+    <a href="/collections/whiskey?page=2">Mostrar más</a>
+    '''
+    assert _discover_page_count(html, 40) == 4
+
+
+def test_tost_health_rejects_implausibly_small_catalog():
+    from app.collectors.tost import MIN_PLAUSIBLE_PRODUCTS, _health
+    from app.domain import SectionStats
+
+    sections = [SectionStats(key="whisky", name="Whisky", url="https://tost.cl/collections/whiskey")]
+    status, score = _health(sections, MIN_PLAUSIBLE_PRODUCTS - 1)
+    assert status == "BROKEN"
+    assert score <= 20
+
+
+def test_tost_collects_paginated_html_instead_of_products_json(monkeypatch):
+    import app.collectors.tost as tost
+
+    section = tost.CatalogSection("whisky", "Whisky", "whiskey")
+    monkeypatch.setattr(tost, "CATALOG_SECTIONS", (section,))
+    monkeypatch.setattr(tost, "MIN_PLAUSIBLE_PRODUCTS", 5)
+
+    def html_page(page: int) -> str:
+        cards = "".join(
+            f'''<article><a href="/products/whisky-{page}-{idx}"><h3>Whisky Prueba {page}-{idx} 750cc</h3></a>
+            <span>${10 + page}.{idx:03d}</span><del>${20 + page}.{idx:03d}</del></article>'''
+            for idx in range(1, 4)
+        )
+        progress = '<div>Mostrando 3 de 9</div><a href="?page=2">más</a><a href="?page=3">más</a>'
+        return f'<div id="product-grid">{cards}</div>{progress}'
+
+    def fake_fetch(_section, page_number):
+        return page_number, html_page(page_number), 200
+
+    monkeypatch.setattr(tost, "_fetch_html_page", fake_fetch)
+    batch = tost._collect_products()
+    assert len(batch.products) == 9
+    assert batch.stats.pages_visited == 3
+    assert batch.stats.health_status == "HEALTHY"
+    assert batch.stats.discovery_source == "configured-html-collections-parallel-pagination"

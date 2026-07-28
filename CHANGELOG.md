@@ -1,5 +1,24 @@
 # Changelog
 
+## v5.1.0 — Stability Hardening & Bounded Collectors
+
+- Reescribe Tost sobre páginas HTML normales y elimina la dependencia operacional de `products.json`.
+- Descubre paginación real y procesa hasta tres páginas Tost simultáneamente.
+- Fuerza Tost a `BROKEN` cuando la cobertura es menor a 50 productos.
+- No persiste capturas parciales con salud `BROKEN`, conservando los datos históricos.
+- Añade límite configurable de 25 minutos por collector.
+- Mantiene GradoÚnico en la misma región con preflight y circuit breaker.
+- Las ejecuciones parciales ya no aparecen como `Crashed` en Railway; solo fallan si ninguna tienda termina correctamente.
+- Sin migraciones nuevas.
+
+## v5.0.1 — GradoÚnico Connection Resilience
+
+- Añade preflight de conectividad para los dominios `www` y raíz de GradoÚnico.
+- Reduce reintentos y timeout de conexión para evitar esperas repetidas de casi un minuto por categoría.
+- Incorpora circuit breaker tras dos fallas TCP consecutivas.
+- Si GradoÚnico está inaccesible, conserva sus datos históricos y permite que las otras tiendas continúen.
+- No hay migraciones ni variables nuevas.
+
 ## v5.0.0 — Four-store Expansion & Unified Run Status
 
 - Añade collectors HTTP para Tost y GradoÚnico.
