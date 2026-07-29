@@ -103,3 +103,13 @@ def test_wait_for_signature_change_passes_arg_as_keyword():
     assert wait_for_signature_change(page, "a[href]", "old", timeout_ms=4_500)
     assert page.calls[0]["arg"] == ["a[href]", "old"]
     assert page.calls[0]["timeout"] == 4_500
+
+
+def test_phase_metrics_merge_accumulates_all_phases():
+    first = PhaseMetrics()
+    first.add("http", 120)
+    second = PhaseMetrics()
+    second.add("http", 80)
+    second.add("parse", 25)
+    first.merge(second)
+    assert first.as_dict() == {"http": 200, "parse": 25}

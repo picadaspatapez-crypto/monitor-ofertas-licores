@@ -1,3 +1,55 @@
+# v5.1.11
+
+- El Mundo del Vino usa un único catálogo global Shopify paginado.
+- Se eliminan las solicitudes por colección que disparaban HTTP 429.
+- Clasificación local de productos por tipo, etiquetas y nombre.
+- Una página posterior limitada conserva el catálogo obtenido como DEGRADED.
+- Sin migraciones ni variables nuevas.
+
+# v5.1.10
+
+- Excluye la categoría promocional `mascomprados` / “Adiós Gabriel” del descubrimiento automático de Licor3B.
+- Incluye las correcciones de colecciones válidas de El Mundo del Vino de v5.1.9.
+
+# Changelog
+
+## 5.1.9
+
+- Elimina la colección inexistente `/collections/cervezas` de El Mundo del Vino.
+- Evita alertas estructurales falsas y solicitudes 404 repetidas.
+- Conserva Licores, Whisky, Vinos y Espumantes como colecciones activas.
+
+v5.1.8 — Trusted Partial Catalog Persistence
+
+- El Mundo del Vino persiste capturas parciales plausibles como `DEGRADED`.
+- Los HTTP 429 parciales ya no invalidan cientos de productos obtenidos correctamente.
+- La comparación histórica no descarta una captura ya clasificada como parcial confiable.
+
+# Changelog
+
+## v5.1.7
+
+- Manejo explícito y conservador de HTTP 429 en El Mundo del Vino.
+- Pausas preventivas entre categorías y un único reintento respetando `Retry-After`.
+- Conservación de páginas ya recopiladas cuando una página posterior queda limitada.
+- Persistencia de catálogos parciales suficientes como `DEGRADED`.
+- Resumen multi-tienda enviado inmediatamente después de terminar los collectors.
+
+# v5.1.6 — El Mundo del Vino Resilient Shopify Fallback
+
+- Feed JSON Shopify como fuente preferente.
+- HTML como fallback con tres intentos, host alternativo y cache busting.
+- Diagnósticos de HTTP 200 sin productos, challenge y tamaño de respuesta.
+- Evita fallos intermitentes por variantes de HTML o respuestas de caché.
+
+# Changelog
+
+## 5.1.4
+- Corrige la agregación de métricas de collectors HTTP.
+- Reconoce URLs Shopify directas y con prefijo de colección.
+- Canonicaliza publicaciones de El Mundo del Vino a `/products/<slug>`.
+- Añade regresiones automatizadas para ambos fallos.
+
 ## v5.1.2 — Tost Browser & GradoÚnico Route Fix
 
 - Cambia Tost a Playwright para esperar el catálogo dinámico real.
@@ -113,3 +165,19 @@
 - Añade collectors HTTP para El Mundo del Vino y Comercial JP.
 - Conserva límite de 25 minutos por tienda, matching, buscador, Telegram y favoritos.
 - Sin migraciones nuevas.
+
+## 5.1.5 — Concurrent Master Product Upsert Fix
+
+- Makes `master_products.normalized_key` creation safe across parallel collectors.
+- Uses PostgreSQL `ON CONFLICT DO NOTHING` in a short independent transaction.
+- Prevents a duplicate master row from invalidating an entire store persistence run.
+- Keeps the existing unique constraint as the final source of truth.
+
+## 5.2.0
+
+- Integra La Barra, Donde La Negra y Distribuidora La Modelo.
+- Amplía el registry a siete tiendas con cuatro workers máximos.
+- La Barra usa Playwright y expansión dinámica controlada.
+- Donde La Negra usa categorías WooCommerce públicas y paginación convencional.
+- La Modelo usa catálogo público con fallback al catálogo clásico.
+- Matching, búsqueda, favoritos, comparador y Telegram operan sobre las siete tiendas.

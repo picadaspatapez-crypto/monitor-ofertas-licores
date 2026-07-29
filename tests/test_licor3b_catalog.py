@@ -32,3 +32,16 @@ def test_discovers_only_root_product_categories():
     """
     sections = _discover_sections_from_html(html)
     assert {section.key for section in sections} == {"vinos", "whiskys"}
+
+
+def test_excludes_adios_gabriel_promotional_category():
+    from app.collectors.licor3b import _discover_sections_from_html
+
+    html = """
+    <nav>
+      <a href="/product-category/mascomprados/">Adiós Gabriel</a>
+      <a href="/product-category/cervezas/">Cervezas</a>
+    </nav>
+    """
+    sections = _discover_sections_from_html(html)
+    assert {section.key for section in sections} == {"cervezas"}
