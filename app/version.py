@@ -1,5 +1,5 @@
 """Application release metadata."""
 
-APP_VERSION = "5.1.10"
+APP_VERSION = "5.1.11"
 __version__ = APP_VERSION
-RELEASE_NAME = "Licor3B Category Filter"
+RELEASE_NAME = "El Mundo Global Shopify Catalog"
