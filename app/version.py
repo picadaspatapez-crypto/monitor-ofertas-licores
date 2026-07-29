@@ -1,5 +1,3 @@
-"""Application release metadata."""
-
-APP_VERSION = "5.1.11"
-__version__ = APP_VERSION
-RELEASE_NAME = "El Mundo Global Shopify Catalog"
+__version__ = "5.2.0"
+APP_VERSION = __version__
+RELEASE_NAME = "Seven Store Expansion: La Barra, Donde La Negra & La Modelo"
