@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
 import unicodedata
 from dataclasses import dataclass, replace
-from urllib.parse import urljoin, urlparse, urlunparse
+from typing import Any
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from app.collectors.base import StoreMetadata
 from app.deadlines import ensure_budget
@@ -23,7 +25,7 @@ from app.performance import (
 
 BASE_URL = "https://labarra.cl"
 MIN_PLAUSIBLE_PRODUCTS = 60
-MAX_EXPANSION_ROUNDS = 35
+MAX_EXPANSION_ROUNDS = 30
 PRODUCT_SELECTOR = "a[href*='/producto/']"
 
 
@@ -34,13 +36,54 @@ class CatalogSection:
     url: str
 
 
+# Se usan categorías específicas y vigentes. Son más estables que los antiguos
+# contenedores numéricos generales y reducen la dependencia de un único grid.
 CATALOG_SECTIONS: tuple[CatalogSection, ...] = (
-    CatalogSection("licores", "Licores", f"{BASE_URL}/categoria/759"),
-    CatalogSection("vinos-espumantes", "Vinos y Espumantes", f"{BASE_URL}/categoria/293"),
-    CatalogSection("cervezas", "Cervezas", f"{BASE_URL}/categoria/cervezas"),
+    CatalogSection("whisky", "Whisky", f"{BASE_URL}/categoria/whisky-348"),
+    CatalogSection("pisco", "Pisco", f"{BASE_URL}/categoria/pisco-343"),
+    CatalogSection("licores", "Licores", f"{BASE_URL}/categoria/licores-458"),
+    CatalogSection("aperitivos", "Licores y Aperitivos", f"{BASE_URL}/categoria/licores-y-aperitivos-339"),
+    CatalogSection("cocteles", "Cócteles y Sour", f"{BASE_URL}/categoria/coctel-y-sour-341"),
+    CatalogSection("vinos-espumantes", "Vinos y Espumantes", f"{BASE_URL}/categoria/vinos-y-espumantes-293"),
+    CatalogSection("cervezas", "Cervezas", f"{BASE_URL}/categoria/cervezas-288"),
 )
 
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
+_MAINTENANCE_MARKERS = (
+    "volveremos pronto",
+    "maintenance center",
+    "sitio en mantenimiento",
+    "estamos en mantenimiento",
+)
+_NAME_KEYS = ("name", "title", "productName", "product_name", "displayName")
+_URL_KEYS = ("url", "href", "permalink", "productUrl", "product_url", "path")
+_SLUG_KEYS = ("slug", "handle", "seoSlug", "urlKey")
+_CURRENT_PRICE_KEYS = (
+    "salePrice",
+    "sale_price",
+    "currentPrice",
+    "current_price",
+    "sellingPrice",
+    "selling_price",
+    "finalPrice",
+    "final_price",
+    "bestPrice",
+    "best_price",
+    "price",
+    "amount",
+)
+_REGULAR_PRICE_KEYS = (
+    "regularPrice",
+    "regular_price",
+    "listPrice",
+    "list_price",
+    "referencePrice",
+    "reference_price",
+    "compareAtPrice",
+    "compare_at_price",
+    "originalPrice",
+    "original_price",
+)
 
 
 def _normalize_text(value: str) -> str:
@@ -73,6 +116,31 @@ def _price_values(text: str) -> list[int]:
         if 100 <= value <= 20_000_000 and value not in values:
             values.append(value)
     return values
+
+
+def _coerce_price(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, dict):
+        for key in ("amount", "value", "price", "centAmount"):
+            if key in value:
+                parsed = _coerce_price(value[key])
+                if parsed is not None:
+                    return parsed
+        return None
+    if isinstance(value, (int, float)):
+        number = round(float(value))
+        return number if 100 <= number <= 20_000_000 else None
+    text = str(value).strip()
+    if not text:
+        return None
+    # En CLP los puntos suelen ser separadores de miles. Se evita interpretar
+    # porcentajes, precios por litro y otros valores demasiado pequeños.
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return None
+    number = int(digits)
+    return number if 100 <= number <= 20_000_000 else None
 
 
 def _discount(regular: int | None, current: int) -> float:
@@ -150,12 +218,124 @@ def _parse_html(html: str, section_name: str) -> tuple[dict[str, CollectedProduc
     return products, candidates
 
 
+def _first_value(item: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in item and item[key] not in (None, ""):
+            return item[key]
+    return None
+
+
+def _json_product_from_dict(item: dict[str, Any], section_name: str) -> CollectedProduct | None:
+    name_raw = _first_value(item, _NAME_KEYS)
+    if isinstance(name_raw, dict):
+        name_raw = name_raw.get("rendered") or name_raw.get("value")
+    name = _normalize_text(str(name_raw or ""))
+    if len(name) < 3:
+        return None
+
+    raw_url = _first_value(item, _URL_KEYS)
+    if isinstance(raw_url, dict):
+        raw_url = raw_url.get("url") or raw_url.get("href")
+    slug = _first_value(item, _SLUG_KEYS)
+    if not raw_url and slug:
+        raw_url = f"/producto/{quote(str(slug).strip('/'))}"
+    if not raw_url or not _is_product_url(str(raw_url)):
+        return None
+
+    current: int | None = None
+    for key in _CURRENT_PRICE_KEYS:
+        if key in item:
+            candidate = _coerce_price(item[key])
+            if candidate is not None:
+                current = candidate if current is None else min(current, candidate)
+    if current is None and isinstance(item.get("prices"), dict):
+        current = _coerce_price(
+            _first_value(item["prices"], _CURRENT_PRICE_KEYS)
+        )
+    if current is None:
+        return None
+
+    regular: int | None = None
+    for key in _REGULAR_PRICE_KEYS:
+        if key in item:
+            candidate = _coerce_price(item[key])
+            if candidate is not None:
+                regular = candidate if regular is None else max(regular, candidate)
+    if regular is None and isinstance(item.get("prices"), dict):
+        regular = _coerce_price(
+            _first_value(item["prices"], _REGULAR_PRICE_KEYS)
+        )
+    if regular is not None and regular <= current:
+        regular = None
+
+    return CollectedProduct(
+        store="La Barra",
+        name=name[:500],
+        url=_canonical_url(str(raw_url)),
+        current_price=current,
+        regular_price=regular,
+        discount_pct=_discount(regular, current),
+        source_sections=(section_name,),
+    )
+
+
+def _extract_json_products(payload: Any, section_name: str) -> dict[str, CollectedProduct]:
+    products: dict[str, CollectedProduct] = {}
+    seen_nodes: set[int] = set()
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if depth > 16:
+            return
+        if isinstance(node, (dict, list)):
+            identity = id(node)
+            if identity in seen_nodes:
+                return
+            seen_nodes.add(identity)
+        if isinstance(node, dict):
+            product = _json_product_from_dict(node, section_name)
+            if product is not None:
+                products[product.url] = product
+            for value in node.values():
+                walk(value, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, depth + 1)
+
+    walk(payload)
+    return products
+
+
+def _script_payloads(html: str) -> list[Any]:
+    soup = BeautifulSoup(html, "html.parser")
+    payloads: list[Any] = []
+    for script in soup.find_all("script"):
+        if not isinstance(script, Tag):
+            continue
+        script_type = str(script.get("type") or "").casefold()
+        script_id = str(script.get("id") or "").casefold()
+        if "json" not in script_type and script_id not in {"__next_data__", "__nuxt_data__"}:
+            continue
+        raw = script.string or script.get_text("", strip=True)
+        if not raw or len(raw) > 15_000_000:
+            continue
+        try:
+            payloads.append(json.loads(raw))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return payloads
+
+
 def _merge(existing: CollectedProduct | None, incoming: CollectedProduct) -> CollectedProduct:
     if existing is None:
         return incoming
     sections = tuple(sorted(set(existing.source_sections + incoming.source_sections), key=str.casefold))
     chosen = incoming if incoming.current_price <= existing.current_price else existing
     return replace(chosen, source_sections=sections)
+
+
+def _looks_like_maintenance(html: str) -> bool:
+    folded = _fold(BeautifulSoup(html, "html.parser").get_text(" ", strip=True))
+    return any(marker in folded for marker in _MAINTENANCE_MARKERS)
 
 
 def _expand_catalog(page, settings: PerformanceSettings) -> int:
@@ -200,10 +380,10 @@ def _health(section_stats: list[SectionStats], product_count: int) -> tuple[str,
         return "BROKEN", 20 if product_count else 0
     failed = sum(item.status != "success" for item in section_stats)
     warnings = sum(item.structural_warning for item in section_stats)
-    score = max(0, min(100, 100 - failed * 18 - warnings * 8))
+    score = max(0, min(100, 100 - failed * 14 - warnings * 7))
     if failed == 0 and warnings == 0:
         return "HEALTHY", score
-    if failed <= 1 and score >= 55:
+    if failed <= 2 and score >= 55:
         return "DEGRADED", score
     return "BROKEN", score
 
@@ -215,15 +395,31 @@ def _collect_products() -> CollectionBatch:
     section_stats: list[SectionStats] = []
     pages = cards = duplicates = 0
     aggregate = PhaseMetrics()
+    maintenance_detected = False
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(locale="es-CL", timezone_id="America/Santiago")
-        block_stats = install_resource_blocking(
-            context, enabled=settings.block_browser_resources
-        )
+        install_resource_blocking(context, enabled=settings.block_browser_resources)
         page = context.new_page()
         page.set_default_timeout(settings.product_wait_timeout_ms)
+        captured_payloads: list[Any] = []
+
+        def capture_response(response) -> None:
+            try:
+                resource_type = response.request.resource_type
+                content_type = response.headers.get("content-type", "").casefold()
+                if resource_type not in {"xhr", "fetch"} and "json" not in content_type:
+                    return
+                if "json" not in content_type:
+                    return
+                payload = response.json()
+                if isinstance(payload, (dict, list)):
+                    captured_payloads.append(payload)
+            except Exception:
+                return
+
+        page.on("response", capture_response)
         try:
             for index, section in enumerate(CATALOG_SECTIONS, start=1):
                 ensure_budget(f"La Barra categoría {section.name}")
@@ -233,23 +429,47 @@ def _collect_products() -> CollectionBatch:
                 error_message: str | None = None
                 warning = False
                 section_products: dict[str, CollectedProduct] = {}
+                captured_payloads.clear()
                 print(f"La Barra categoría {index}/{len(CATALOG_SECTIONS)}: {section.name}", flush=True)
+                response = None
+                navigation_error: Exception | None = None
+                rounds = 0
                 try:
                     with metrics.measure("navigation_wait"):
-                        response = page.goto(section.url, wait_until="domcontentloaded", timeout=25_000)
+                        try:
+                            response = page.goto(section.url, wait_until="domcontentloaded", timeout=25_000)
+                        except PlaywrightTimeoutError as exc:
+                            navigation_error = exc
                         wait_for_any_selector(
                             page,
                             PRODUCT_SELECTOR,
                             timeout_ms=settings.product_wait_timeout_ms,
                             settle_ms=settings.quick_settle_ms,
                         )
+                    html = page.content()
+                    if _looks_like_maintenance(html):
+                        maintenance_detected = True
+                        raise RuntimeError("La Barra informó que el sitio está en mantenimiento.")
                     with metrics.measure("scroll_expand"):
                         rounds = _expand_catalog(page, settings)
+                    html = page.content()
                     with metrics.measure("parse"):
-                        section_products, section_cards = _parse_html(page.content(), section.name)
+                        dom_products, section_cards = _parse_html(html, section.name)
+                        section_products.update(dom_products)
+                        payload_products = 0
+                        for payload in [*captured_payloads, *_script_payloads(html)]:
+                            extracted = _extract_json_products(payload, section.name)
+                            payload_products += len(extracted)
+                            for url, product in extracted.items():
+                                section_products[url] = _merge(section_products.get(url), product)
+                    if not section_products and navigation_error is not None:
+                        raise navigation_error
+                    if not section_products:
+                        raise RuntimeError(
+                            "La categoría respondió sin productos en DOM ni en respuestas JSON."
+                        )
                     pages += 1
-                    cards += section_cards
-                    warning = not section_products
+                    cards += section_cards + payload_products
                     for url, product in section_products.items():
                         if url in all_products:
                             duplicates += 1
@@ -257,20 +477,26 @@ def _collect_products() -> CollectionBatch:
                     code = response.status if response is not None else None
                     print(
                         f"La Barra {section.key}: HTTP={code}, rondas={rounds}, "
-                        f"tarjetas={section_cards}, productos={len(section_products)}, global={len(all_products)}",
+                        f"DOM={len(dom_products)}, JSON={payload_products}, "
+                        f"productos={len(section_products)}, global={len(all_products)}",
                         flush=True,
                     )
                 except Exception as exc:
                     status = "failed"
                     error_message = f"{type(exc).__name__}: {exc}"[:1000]
-                    print(f"✖ La Barra {section.name}: {error_message}. Continúa.", file=sys.stderr, flush=True)
+                    warning = True
+                    print(
+                        f"✖ La Barra {section.name}: {error_message}. Continúa con la siguiente categoría.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 duration_ms = int((time.monotonic() - section_started) * 1000)
                 section_stats.append(
                     SectionStats(
                         key=section.key,
                         name=section.name,
                         url=section.url,
-                        pages_visited=1 if status == "success" else 0,
+                        pages_visited=int(bool(section_products)),
                         cards_seen=len(section_products),
                         unique_products=len(section_products),
                         duplicates_removed=0,
@@ -282,6 +508,8 @@ def _collect_products() -> CollectionBatch:
                     )
                 )
                 aggregate.merge(metrics)
+                if maintenance_detected and not all_products:
+                    break
         finally:
             context.close()
             browser.close()
@@ -297,25 +525,25 @@ def _collect_products() -> CollectionBatch:
         sections_succeeded=sum(item.status == "success" for item in section_stats),
         sections_failed=sum(item.status != "success" for item in section_stats),
         duplicates_removed=duplicates,
-        discovery_source="fixed_dynamic_root_categories",
+        discovery_source="playwright_dom_json_hybrid",
         health_status=health_status,
         health_score=health_score,
         structural_warnings=sum(item.structural_warning for item in section_stats),
         section_stats=tuple(section_stats),
-        performance_ms={
-            **aggregate.as_dict(),
-            "blocked_requests": block_stats.blocked_requests,
-            "total": duration_ms,
-        },
+        performance_ms={**aggregate.as_dict(), "total": duration_ms},
     )
     print(
         f"Resumen La Barra: categorías={len(section_stats)}, correctas={stats.sections_succeeded}, "
         f"fallidas={stats.sections_failed}, productos_únicos={len(all_products)}, "
-        f"salud={health_status}({health_score})",
+        f"mantenimiento={'sí' if maintenance_detected else 'no'}, salud={health_status}({health_score})",
         flush=True,
     )
     if not all_products:
-        raise RuntimeError("La Barra no entregó productos en ninguna categoría.")
+        if maintenance_detected:
+            raise RuntimeError(
+                "La Barra está temporalmente en mantenimiento; se conserva el catálogo histórico."
+            )
+        raise RuntimeError("La Barra no entregó productos mediante DOM ni respuestas JSON.")
     return CollectionBatch(products=list(all_products.values()), stats=stats)
 
 

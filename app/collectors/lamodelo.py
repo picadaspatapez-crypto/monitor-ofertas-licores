@@ -18,7 +18,7 @@ from app.performance import PhaseMetrics
 
 BASE_URL = "https://www.lamodelo.cl"
 REQUEST_TIMEOUT = (5, 22)
-MAX_PAGES = 120
+MAX_PAGES = 180
 MIN_PLAUSIBLE_PRODUCTS = 100
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
 _CODE_RE = re.compile(r"C[oó]digo\s*:\s*([A-Za-z0-9_-]+)", re.IGNORECASE)
