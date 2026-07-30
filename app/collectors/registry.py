@@ -6,24 +6,24 @@ from app.collectors.base import Collector
 from app.collectors.comercialjp import ComercialJPCollector
 from app.collectors.elmundodelvino import ElMundoDelVinoCollector
 from app.collectors.licor3b import Licor3BCollector
-from app.collectors.labarra import LaBarraCollector
 from app.collectors.dondelanegra import DondeLaNegraCollector
 from app.collectors.lamodelo import LaModeloCollector
+from app.collectors.socomep import SocomepCollector
 from app.collectors.liquidos import LiquidosCollector
 
 CollectorFactory = Callable[[], Collector]
 
-# Tost y GradoÚnico permanecen en el repositorio para diagnóstico, pero están
-# deshabilitados tras fallar de forma repetida en Railway. La operación activa
-# usa dos reemplazos con catálogos HTML públicos y paginación convencional.
+# Tost, GradoÚnico y La Barra permanecen en el repositorio para diagnóstico,
+# pero están deshabilitados en la operación activa. Socomep reemplaza a La Barra
+# con catálogo Jumpseller público y paginación convencional.
 COLLECTOR_FACTORIES: tuple[CollectorFactory, ...] = (
     Licor3BCollector,
     LiquidosCollector,
     ElMundoDelVinoCollector,
     ComercialJPCollector,
-    LaBarraCollector,
     DondeLaNegraCollector,
     LaModeloCollector,
+    SocomepCollector,
 )
 
 

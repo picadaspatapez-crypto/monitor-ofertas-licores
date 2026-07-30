@@ -109,6 +109,8 @@ def _fresh_products(
 ) -> list[Product]:
     result: list[Product] = []
     for product in products:
+        if product.store_record is not None and not product.store_record.is_active:
+            continue
         seen_at = product.last_seen_at
         if seen_at is None:
             continue

@@ -34,7 +34,7 @@ def _variant_from_signature(name: str, brand: str | None) -> str | None:
 def refresh_search_catalog(session: Session) -> CatalogRefreshSummary:
     statement = (
         select(MasterProduct)
-        .options(selectinload(MasterProduct.store_products))
+        .options(selectinload(MasterProduct.store_products).selectinload(Product.store_record))
         .where(MasterProduct.status != "merged")
         .order_by(MasterProduct.id)
     )
@@ -43,7 +43,11 @@ def refresh_search_catalog(session: Session) -> CatalogRefreshSummary:
     alias_count = 0
 
     for master in masters:
-        products: list[Product] = list(master.store_products)
+        products: list[Product] = [
+            product
+            for product in master.store_products
+            if product.store_record is None or product.store_record.is_active
+        ]
         source_names = [product.name for product in products]
         aliases = unique_aliases([master.canonical_name, *source_names])
         signature_names = source_names or [master.canonical_name]

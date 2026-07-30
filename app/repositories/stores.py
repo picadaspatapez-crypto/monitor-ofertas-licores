@@ -30,3 +30,20 @@ def get_or_create_store(
     store.currency_code = currency_code
     session.flush()
     return store
+
+
+def synchronize_active_stores(session: Session, connector_keys: set[str]) -> int:
+    """Activa solo los collectors registrados y desactiva fuentes retiradas.
+
+    Los productos históricos se conservan, pero las tiendas deshabilitadas dejan
+    de participar en el buscador y en ofertas vigentes.
+    """
+    changed = 0
+    stores = list(session.scalars(select(Store)).all())
+    for store in stores:
+        should_be_active = store.connector_key in connector_keys
+        if bool(store.is_active) != should_be_active:
+            store.is_active = should_be_active
+            changed += 1
+    session.flush()
+    return changed

@@ -1,3 +1,3 @@
-__version__ = "5.3.2"
+__version__ = "5.3.3"
 APP_VERSION = __version__
-RELEASE_NAME = "Store Resilience: 12h Snapshot & Weekly Preflight"
+RELEASE_NAME = "Socomep Replacement: La Barra Disabled"

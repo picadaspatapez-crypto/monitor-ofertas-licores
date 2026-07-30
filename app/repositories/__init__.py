@@ -16,7 +16,7 @@ from app.repositories.runs import (
     previous_successful_product_count,
     start_scrape_run,
 )
-from app.repositories.stores import get_or_create_store
+from app.repositories.stores import get_or_create_store, synchronize_active_stores
 
 __all__ = [
     "save_product",
@@ -29,6 +29,7 @@ __all__ = [
     "previous_successful_product_count",
     "previous_health_status",
     "get_or_create_store",
+    "synchronize_active_stores",
     "latest_sent_alert",
     "reserve_alert",
     "mark_alert_sent",

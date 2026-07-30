@@ -33,6 +33,7 @@ from app.repositories import (
     reconcile_cross_store_matches,
     save_product,
     start_scrape_run,
+    synchronize_active_stores,
 )
 from app.services import (
     deliver_notification_bundles,
@@ -130,12 +131,8 @@ def _scheduled_execution_or_none(
     performance: PerformanceSettings,
 ) -> CollectorExecution | None:
     interval_hours: int | None = None
-    paused_store = False
     if collector.key == "elmundodelvino":
         interval_hours = performance.el_mundo_interval_hours
-    elif collector.key == "labarra":
-        interval_hours = performance.labarra_preflight_interval_hours
-        paused_store = True
     if interval_hours is None:
         return None
 
@@ -156,22 +153,6 @@ def _scheduled_execution_or_none(
         return None
 
     remaining = _hours_until_due(last_finished, interval_hours)
-    if paused_store:
-        return CollectorExecution(
-            key=collector.key,
-            store_name=collector.store_name,
-            success=False,
-            duration_ms=0,
-            products_found=snapshot.products_found if snapshot else 0,
-            store_id=store.id,
-            run_id=snapshot.run_id if snapshot else None,
-            health_status="PAUSED",
-            execution_state="PAUSED",
-            detail=(
-                f"Collector pausado; próximo preflight semanal en aproximadamente "
-                f"{remaining:.1f} h."
-            ),
-        )
     if snapshot is None:
         # Sin un snapshot confiable, se vuelve a intentar aunque el intervalo
         # todavía no haya vencido para no dejar la tienda vacía indefinidamente.
@@ -992,6 +973,11 @@ def run_pipeline() -> int:
     engine, SessionLocal = create_database(settings.database_url)
     Base.metadata.create_all(engine)
     collectors = enabled_collectors()
+    with SessionLocal() as session:
+        changed_store_states = synchronize_active_stores(
+            session, {collector.key for collector in collectors}
+        )
+        session.commit()
     pipeline_started = time.monotonic()
 
     print(f"Monitor de Licores v{__version__} · {RELEASE_NAME}", flush=True)
@@ -999,6 +985,11 @@ def run_pipeline() -> int:
         f"Collectors habilitados: {', '.join(item.key for item in collectors)}",
         flush=True,
     )
+    if changed_store_states:
+        print(
+            f"Tiendas activas sincronizadas: {changed_store_states} estado(s) actualizado(s).",
+            flush=True,
+        )
     print(
         f"Ejecución paralela: workers={min(performance.collector_workers, len(collectors))}; "
         f"bloqueo_recursos={'sí' if performance.block_browser_resources else 'no'}; "
@@ -1030,7 +1021,7 @@ def run_pipeline() -> int:
     print(
         "Resiliencia de tiendas: "
         f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h; "
-        f"La Barra preflight cada {performance.labarra_preflight_interval_hours} h.",
+        "La Barra deshabilitada; Socomep activo cada 6 h.",
         flush=True,
     )
 
