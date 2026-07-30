@@ -5,9 +5,10 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 
 from app.analyzers import analyze_catalog, analyze_cross_store_prices
-from app.collectors.base import Collector
+from app.collectors.base import Collector, CollectorPausedError
 from app.collectors.registry import enabled_collectors
 from app.config import Settings
 from app.database import Base, create_database
@@ -41,6 +42,7 @@ from app.services import (
 from app.reports.global_summary import build_global_run_summary
 from app.search.catalog import refresh_search_catalog
 from app.version import RELEASE_NAME, __version__
+from sqlalchemy import select
 
 
 @dataclass(frozen=True)
@@ -58,7 +60,174 @@ class CollectorExecution:
     price_drops: int = 0
     price_increases: int = 0
     sections_failed: int = 0
+    execution_state: str = "UPDATED"
+    detail: str | None = None
 
+
+
+
+@dataclass(frozen=True)
+class RunSnapshot:
+    run_id: int
+    store_id: int
+    products_found: int
+    health_status: str
+    finished_at: datetime
+
+
+def _latest_finished_run(session, store_id: int, *, exclude_run_id: int | None = None):
+    query = select(ScrapeRun).where(
+        ScrapeRun.store_id == store_id,
+        ScrapeRun.finished_at.is_not(None),
+    )
+    if exclude_run_id is not None:
+        query = query.where(ScrapeRun.id != exclude_run_id)
+    return session.scalar(
+        query.order_by(ScrapeRun.finished_at.desc(), ScrapeRun.id.desc()).limit(1)
+    )
+
+
+def _latest_healthy_snapshot(
+    session, store_id: int, *, exclude_run_id: int | None = None
+) -> RunSnapshot | None:
+    query = select(ScrapeRun).where(
+        ScrapeRun.store_id == store_id,
+        ScrapeRun.status == "success",
+        ScrapeRun.health_status == "HEALTHY",
+        ScrapeRun.products_found > 0,
+        ScrapeRun.finished_at.is_not(None),
+    )
+    if exclude_run_id is not None:
+        query = query.where(ScrapeRun.id != exclude_run_id)
+    run = session.scalar(
+        query.order_by(ScrapeRun.finished_at.desc(), ScrapeRun.id.desc()).limit(1)
+    )
+    if run is None or run.finished_at is None:
+        return None
+    finished_at = run.finished_at
+    if finished_at.tzinfo is None:
+        finished_at = finished_at.replace(tzinfo=timezone.utc)
+    return RunSnapshot(
+        run_id=int(run.id),
+        store_id=int(run.store_id),
+        products_found=int(run.products_found or 0),
+        health_status=str(run.health_status or "HEALTHY"),
+        finished_at=finished_at,
+    )
+
+
+def _hours_until_due(last_finished_at: datetime, interval_hours: int) -> float:
+    if last_finished_at.tzinfo is None:
+        last_finished_at = last_finished_at.replace(tzinfo=timezone.utc)
+    due_at = last_finished_at + timedelta(hours=interval_hours)
+    return max(0.0, (due_at - datetime.now(timezone.utc)).total_seconds() / 3600)
+
+
+def _scheduled_execution_or_none(
+    *,
+    collector: Collector,
+    SessionLocal,
+    performance: PerformanceSettings,
+) -> CollectorExecution | None:
+    interval_hours: int | None = None
+    paused_store = False
+    if collector.key == "elmundodelvino":
+        interval_hours = performance.el_mundo_interval_hours
+    elif collector.key == "labarra":
+        interval_hours = performance.labarra_preflight_interval_hours
+        paused_store = True
+    if interval_hours is None:
+        return None
+
+    with SessionLocal() as session:
+        store = get_or_create_store(session, **collector.metadata.repository_kwargs())
+        session.flush()
+        latest = _latest_finished_run(session, store.id)
+        snapshot = _latest_healthy_snapshot(session, store.id)
+        session.commit()
+
+    if latest is None or latest.finished_at is None:
+        return None
+    last_finished = latest.finished_at
+    if last_finished.tzinfo is None:
+        last_finished = last_finished.replace(tzinfo=timezone.utc)
+    elapsed = datetime.now(timezone.utc) - last_finished
+    if elapsed >= timedelta(hours=interval_hours):
+        return None
+
+    remaining = _hours_until_due(last_finished, interval_hours)
+    if paused_store:
+        return CollectorExecution(
+            key=collector.key,
+            store_name=collector.store_name,
+            success=False,
+            duration_ms=0,
+            products_found=snapshot.products_found if snapshot else 0,
+            store_id=store.id,
+            run_id=snapshot.run_id if snapshot else None,
+            health_status="PAUSED",
+            execution_state="PAUSED",
+            detail=(
+                f"Collector pausado; próximo preflight semanal en aproximadamente "
+                f"{remaining:.1f} h."
+            ),
+        )
+    if snapshot is None:
+        # Sin un snapshot confiable, se vuelve a intentar aunque el intervalo
+        # todavía no haya vencido para no dejar la tienda vacía indefinidamente.
+        return None
+    return CollectorExecution(
+        key=collector.key,
+        store_name=collector.store_name,
+        success=True,
+        duration_ms=0,
+        products_found=snapshot.products_found,
+        store_id=snapshot.store_id,
+        run_id=snapshot.run_id,
+        health_status="STALE",
+        execution_state="STALE",
+        detail=(
+            f"Se reutiliza el último catálogo confiable; próxima revisión en "
+            f"aproximadamente {remaining:.1f} h."
+        ),
+    )
+
+
+def _mark_run_special(
+    *,
+    SessionLocal,
+    run_id: int | None,
+    status: str,
+    health_status: str,
+    health_score: int,
+    error_message: str | None = None,
+    products_found: int = 0,
+) -> None:
+    if run_id is None:
+        return
+    with SessionLocal() as session:
+        run = session.get(ScrapeRun, run_id)
+        if run is None or run.status != "running":
+            return
+        finish_scrape_run(
+            run,
+            status=status,
+            products_found=products_found,
+            error_message=error_message,
+            metrics={
+                "health_status": health_status,
+                "health_score": health_score,
+                "sections_discovered": 0,
+                "sections_visited": 0,
+                "sections_succeeded": 0,
+                "sections_failed": 0,
+                "pages_visited": 0,
+                "cards_seen": 0,
+                "duplicates_removed": 0,
+                "structural_warnings": 0,
+            },
+        )
+        session.commit()
 
 def _metrics_dict(stats, previous_count: int | None) -> dict:
     return {
@@ -332,7 +501,60 @@ def _run_collector(
                 raise RuntimeError("No se pudo recuperar la ejecución activa.")
             previous_count = previous_successful_product_count(session, store, run.id)
             previous_health = previous_health_status(session, store, run.id)
+            healthy_snapshot = _latest_healthy_snapshot(
+                session, store.id, exclude_run_id=run.id
+            )
             final_stats = _apply_historical_health(batch.stats, previous_count)
+
+            # El Mundo del Vino usa el último snapshot HEALTHY cuando la captura
+            # actual quedó parcial. Así una página 429 no mezcla un catálogo
+            # incompleto con observaciones confiables anteriores.
+            if (
+                collector.key == "elmundodelvino"
+                and final_stats.health_status == "DEGRADED"
+                and healthy_snapshot is not None
+            ):
+                performance_ms = dict(final_stats.performance_ms)
+                performance_ms["collect"] = collect_ms
+                final_stats = replace(final_stats, performance_ms=performance_ms)
+                stale_metrics = _metrics_dict(final_stats, previous_count)
+                stale_metrics["health_status"] = "STALE"
+                stale_metrics["health_score"] = 70
+                finish_scrape_run(
+                    run,
+                    status="stale",
+                    products_found=len(collected),
+                    error_message=(
+                        "Captura parcial descartada; se reutiliza el último "
+                        "snapshot HEALTHY."
+                    ),
+                    metrics=stale_metrics,
+                )
+                session.commit()
+                total_ms = int((time.monotonic() - started) * 1000)
+                print(
+                    f"🟠 El Mundo del Vino: captura parcial de {len(collected)} productos "
+                    f"no persistida; se reutiliza snapshot HEALTHY de "
+                    f"{healthy_snapshot.products_found} productos.",
+                    flush=True,
+                )
+                return CollectorExecution(
+                    key=collector.key,
+                    store_name=collector.store_name,
+                    success=True,
+                    duration_ms=total_ms,
+                    products_found=healthy_snapshot.products_found,
+                    store_id=healthy_snapshot.store_id,
+                    run_id=healthy_snapshot.run_id,
+                    health_status="STALE",
+                    execution_state="STALE",
+                    detail=(
+                        "La captura actual fue parcial; se conserva el último "
+                        "catálogo confiable."
+                    ),
+                    sections_failed=final_stats.sections_failed,
+                )
+
             if final_stats.health_status == "BROKEN":
                 raise RuntimeError(
                     f"{collector.store_name} entregó una cobertura no confiable "
@@ -420,7 +642,79 @@ def _run_collector(
             sections_failed=final_stats.sections_failed,
         )
 
+    except CollectorPausedError as exc:
+        _mark_run_special(
+            SessionLocal=SessionLocal,
+            run_id=run_id,
+            status="paused",
+            health_status="PAUSED",
+            health_score=0,
+            error_message=str(exc)[:2000],
+        )
+        total_ms = int((time.monotonic() - started) * 1000)
+        print(
+            f"⏸ Collector {collector.key} pausado tras {total_ms / 1000:.1f}s: {exc}",
+            flush=True,
+        )
+        return CollectorExecution(
+            key=collector.key,
+            store_name=collector.store_name,
+            success=False,
+            duration_ms=total_ms,
+            error_message=None,
+            store_id=store_id,
+            run_id=None,
+            health_status="PAUSED",
+            execution_state="PAUSED",
+            detail=str(exc)[:500],
+        )
+
     except Exception as exc:
+        # El Mundo del Vino mantiene el último snapshot HEALTHY si el intento
+        # actual falla por 429, timeout u otra inestabilidad de red.
+        if collector.key == "elmundodelvino" and store_id is not None:
+            try:
+                with SessionLocal() as session:
+                    snapshot = _latest_healthy_snapshot(
+                        session, store_id, exclude_run_id=run_id
+                    )
+                if snapshot is not None:
+                    _mark_run_special(
+                        SessionLocal=SessionLocal,
+                        run_id=run_id,
+                        status="stale",
+                        health_status="STALE",
+                        health_score=70,
+                        error_message=f"{type(exc).__name__}: {exc}"[:2000],
+                    )
+                    total_ms = int((time.monotonic() - started) * 1000)
+                    print(
+                        f"🟠 El Mundo del Vino quedó STALE tras {type(exc).__name__}; "
+                        f"se reutiliza snapshot HEALTHY de {snapshot.products_found} productos.",
+                        flush=True,
+                    )
+                    return CollectorExecution(
+                        key=collector.key,
+                        store_name=collector.store_name,
+                        success=True,
+                        duration_ms=total_ms,
+                        products_found=snapshot.products_found,
+                        store_id=snapshot.store_id,
+                        run_id=snapshot.run_id,
+                        health_status="STALE",
+                        execution_state="STALE",
+                        detail=(
+                            f"Intento actual limitado ({type(exc).__name__}); "
+                            "se conserva el último catálogo confiable."
+                        ),
+                    )
+            except Exception as stale_error:
+                print(
+                    f"⚠ No se pudo reutilizar snapshot de El Mundo del Vino: {stale_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
         store_id = _track_failed_run(
             SessionLocal=SessionLocal,
             run_id=run_id,
@@ -450,6 +744,7 @@ def _run_collector(
             store_id=store_id,
             run_id=run_id,
             sections_failed=1,
+            execution_state="FAILED",
         )
 
 
@@ -579,21 +874,27 @@ def _run_favorite_alert_stage(
     settings: Settings,
     results: list[CollectorExecution],
 ) -> None:
-    complete = bool(results) and all(
-        result.success
-        and result.run_id is not None
+    relevant = [result for result in results if result.execution_state != "PAUSED"]
+    complete = bool(relevant) and all(
+        result.run_id is not None
         and result.products_found > 0
-        and result.health_status == "HEALTHY"
-        for result in results
+        and (
+            (result.execution_state == "UPDATED" and result.health_status == "HEALTHY")
+            or result.execution_state == "STALE"
+        )
+        for result in relevant
     )
     if not complete:
         print(
-            "Favoritos: evaluación omitida porque la cobertura no fue completa o algún collector no quedó HEALTHY.",
+            "Favoritos: evaluación omitida porque una tienda con datos activos falló "
+            "o una actualización no quedó HEALTHY.",
             flush=True,
         )
         return
 
-    run_ids = tuple(sorted(int(result.run_id) for result in results if result.run_id))
+    run_ids = tuple(
+        sorted(int(result.run_id) for result in relevant if result.run_id is not None)
+    )
     started = time.monotonic()
     try:
         with SessionLocal() as session:
@@ -677,9 +978,12 @@ def _send_global_run_summary(
 
 
 def _pipeline_exit_code(results: list[CollectorExecution]) -> int:
-    """A partial multi-store run is operationally successful when one store completed."""
+    """Una ejecución es operativa si existe al menos un catálogo actualizado o vigente."""
 
-    return 0 if any(result.success for result in results) else 1
+    return 0 if any(
+        result.execution_state in {"UPDATED", "STALE"} and result.success
+        for result in results
+    ) else 1
 
 
 def run_pipeline() -> int:
@@ -723,42 +1027,72 @@ def run_pipeline() -> int:
         .replace(",", "."),
         flush=True,
     )
+    print(
+        "Resiliencia de tiendas: "
+        f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h; "
+        f"La Barra preflight cada {performance.labarra_preflight_interval_hours} h.",
+        flush=True,
+    )
 
-    worker_count = min(performance.collector_workers, len(collectors))
     results: list[CollectorExecution] = []
-    with ThreadPoolExecutor(
-        max_workers=worker_count,
-        thread_name_prefix="store-collector",
-    ) as executor:
-        futures = {
-            executor.submit(
-                _run_collector,
-                collector=collector,
-                SessionLocal=SessionLocal,
-                settings=settings,
-                timeout_minutes=performance.collector_timeout_minutes,
-            ): collector
-            for collector in collectors
-        }
-        for future in as_completed(futures):
-            collector = futures[future]
-            try:
-                results.append(future.result())
-            except Exception as exc:  # Defensa adicional fuera del worker.
-                results.append(
-                    CollectorExecution(
-                        key=collector.key,
-                        store_name=collector.store_name,
-                        success=False,
-                        duration_ms=0,
-                        error_message=f"{type(exc).__name__}: {exc}"[:1000],
+    due_collectors: list[Collector] = []
+    for collector in collectors:
+        scheduled = _scheduled_execution_or_none(
+            collector=collector,
+            SessionLocal=SessionLocal,
+            performance=performance,
+        )
+        if scheduled is None:
+            due_collectors.append(collector)
+            continue
+        results.append(scheduled)
+        if scheduled.execution_state == "STALE":
+            print(
+                f"🟠 {collector.store_name}: no corresponde revisión en este ciclo; "
+                f"{scheduled.detail}",
+                flush=True,
+            )
+        elif scheduled.execution_state == "PAUSED":
+            print(f"⏸ {collector.store_name}: {scheduled.detail}", flush=True)
+
+    worker_count = min(performance.collector_workers, len(due_collectors))
+    if due_collectors:
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="store-collector",
+        ) as executor:
+            futures = {
+                executor.submit(
+                    _run_collector,
+                    collector=collector,
+                    SessionLocal=SessionLocal,
+                    settings=settings,
+                    timeout_minutes=performance.collector_timeout_minutes,
+                ): collector
+                for collector in due_collectors
+            }
+            for future in as_completed(futures):
+                collector = futures[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:  # Defensa adicional fuera del worker.
+                    results.append(
+                        CollectorExecution(
+                            key=collector.key,
+                            store_name=collector.store_name,
+                            success=False,
+                            duration_ms=0,
+                            error_message=f"{type(exc).__name__}: {exc}"[:1000],
+                            execution_state="FAILED",
+                        )
                     )
-                )
-                print(
-                    f"✖ Fallo no controlado en {collector.key}: {exc}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                    print(
+                        f"✖ Fallo no controlado en {collector.key}: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+    else:
+        print("No hay collectors con revisión vencida en este ciclo.", flush=True)
 
     # Confirmar inmediatamente en Telegram qué collectors terminaron, antes de
     # ejecutar matching, reindexación y favoritos. Así una etapa posterior lenta
@@ -780,7 +1114,12 @@ def run_pipeline() -> int:
     )
 
     total_collectors = len(collectors)
-    failures = sum(not result.success for result in results)
+    updated_count = sum(
+        result.execution_state == "UPDATED" and result.success for result in results
+    )
+    stale_count = sum(result.execution_state == "STALE" for result in results)
+    paused_count = sum(result.execution_state == "PAUSED" for result in results)
+    failed_count = sum(result.execution_state == "FAILED" for result in results)
     wall_ms = int((time.monotonic() - pipeline_started) * 1000)
     sequential_ms = sum(result.duration_ms for result in results)
     saved_ms = max(0, sequential_ms - wall_ms)
@@ -788,15 +1127,23 @@ def run_pipeline() -> int:
     print("=" * 64, flush=True)
     print("RESUMEN GLOBAL MULTI-TIENDA · PERFORMANCE", flush=True)
     print(f"Collectors registrados...: {total_collectors}", flush=True)
-    print(f"Collectors correctos......: {total_collectors - failures}", flush=True)
-    print(f"Collectors fallidos.......: {failures}", flush=True)
+    print(f"Actualizados...............: {updated_count}", flush=True)
+    print(f"Snapshots STALE...........: {stale_count}", flush=True)
+    print(f"Collectors pausados.......: {paused_count}", flush=True)
+    print(f"Collectors fallidos.......: {failed_count}", flush=True)
     print(f"Duración de pared.........: {wall_ms / 1000:.1f} s", flush=True)
     print(f"Tiempo secuencial estimado: {sequential_ms / 1000:.1f} s", flush=True)
     print(f"Tiempo ahorrado paralelo..: {saved_ms / 1000:.1f} s", flush=True)
+    labels = {
+        "UPDATED": "OK",
+        "STALE": "STALE",
+        "PAUSED": "PAUSE",
+        "FAILED": "ERROR",
+    }
     for result in sorted(results, key=lambda item: item.key):
-        status = "OK" if result.success else "ERROR"
+        status = labels.get(result.execution_state, "ERROR")
         print(
-            f"{result.store_name:<16} {status:<5} "
+            f"{result.store_name:<20} {status:<5} "
             f"{result.duration_ms / 1000:>8.1f}s · productos={result.products_found}",
             flush=True,
         )

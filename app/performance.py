@@ -53,6 +53,8 @@ class PerformanceSettings:
     dom_growth_timeout_ms: int = 4_500
     quick_settle_ms: int = 250
     collector_timeout_minutes: int = 25
+    el_mundo_interval_hours: int = 12
+    labarra_preflight_interval_hours: int = 168
 
     @classmethod
     def from_env(cls) -> "PerformanceSettings":
@@ -70,6 +72,12 @@ class PerformanceSettings:
             ),
             collector_timeout_minutes=_positive_int(
                 "COLLECTOR_TIMEOUT_MINUTES", 25, minimum=1, maximum=120
+            ),
+            el_mundo_interval_hours=_positive_int(
+                "EL_MUNDO_INTERVAL_HOURS", 12, minimum=1, maximum=168
+            ),
+            labarra_preflight_interval_hours=_positive_int(
+                "LABARRA_PREFLIGHT_INTERVAL_HOURS", 168, minimum=24, maximum=720
             ),
         )
 

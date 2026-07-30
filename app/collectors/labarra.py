@@ -16,7 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-from app.collectors.base import StoreMetadata
+from app.collectors.base import CollectorPausedError, StoreMetadata
 from app.deadlines import bounded_request_timeout, ensure_budget
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
 from app.performance import (
@@ -681,6 +681,53 @@ def _health(section_stats: list[SectionStats], product_count: int) -> tuple[str,
     return "BROKEN", score
 
 
+
+
+def _weekly_preflight() -> None:
+    """Comprueba en pocos segundos si La Barra volvió a exponer productos.
+
+    El preflight se ejecuta como máximo una vez por semana desde el pipeline.
+    No intenta sitemap ni abre Chromium mientras la tienda siga ocultando el
+    catálogo a Railway.
+    """
+
+    section = CATALOG_SECTIONS[0]
+    session = _http_session()
+    try:
+        response = session.get(
+            section.url,
+            timeout=bounded_request_timeout((5, 10)),
+            allow_redirects=True,
+        )
+        if response.status_code in {401, 403, 429}:
+            raise CollectorPausedError(
+                f"La Barra continúa pausada: preflight HTTP {response.status_code} "
+                f"en {response.url}."
+            )
+        response.raise_for_status()
+        html = response.text
+        if _looks_like_maintenance(html):
+            raise CollectorPausedError(
+                "La Barra continúa pausada: el sitio informa mantenimiento."
+            )
+        product_refs = sum(
+            1
+            for link in BeautifulSoup(html, "html.parser").select("a[href]")
+            if _is_product_url(str(link.get("href") or ""))
+        )
+        if product_refs == 0:
+            raise CollectorPausedError(
+                "La Barra continúa pausada: el preflight no encontró productos "
+                "públicos en el HTML recibido desde Railway."
+            )
+        print(
+            f"✓ La Barra preflight semanal: HTTP={response.status_code}, "
+            f"referencias_producto={product_refs}; se reactiva el collector completo.",
+            flush=True,
+        )
+    finally:
+        session.close()
+
 def _collect_products() -> CollectionBatch:
     started = time.monotonic()
     settings = PerformanceSettings.from_env()
@@ -901,6 +948,7 @@ class LaBarraCollector:
     store_name = metadata.name
 
     def collect(self) -> CollectionBatch:
+        _weekly_preflight()
         return _collect_products()
 
 

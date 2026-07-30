@@ -16,6 +16,8 @@ class ExecutionView(Protocol):
     price_increases: int
     sections_failed: int
     error_message: str | None
+    execution_state: str
+    detail: str | None
 
 
 def _duration(milliseconds: int) -> str:
@@ -32,17 +34,44 @@ def build_global_run_summary(
     wall_duration_ms: int,
 ) -> str:
     ordered = sorted(executions, key=lambda item: item.store_name.casefold())
-    successful = sum(item.success for item in ordered)
+    updated = sum(item.execution_state == "UPDATED" and item.success for item in ordered)
+    stale = sum(item.execution_state == "STALE" and item.success for item in ordered)
+    paused = sum(item.execution_state == "PAUSED" for item in ordered)
+    failed = sum(item.execution_state == "FAILED" or (
+        not item.success and item.execution_state not in {"PAUSED"}
+    ) for item in ordered)
     lines = [
         "📊 Revisión multi-tienda completada",
         "",
-        f"Tiendas correctas: {successful}/{len(ordered)}",
+        f"Tiendas actualizadas: {updated}",
+        f"Tiendas con datos vigentes: {updated + stale}",
+        f"Tiendas pausadas: {paused}",
+        f"Tiendas fallidas: {failed}",
         f"Duración collectors: {_duration(wall_duration_ms)}",
         "",
     ]
-    icons = {"HEALTHY": "🟢", "DEGRADED": "🟡", "BROKEN": "🔴"}
+    icons = {
+        "HEALTHY": "🟢",
+        "DEGRADED": "🟡",
+        "BROKEN": "🔴",
+        "STALE": "🟠",
+        "PAUSED": "⏸",
+    }
     for item in ordered:
-        if item.success:
+        state = item.execution_state
+        if state == "PAUSED":
+            lines.append(f"⏸ {item.store_name}")
+            lines.append("   Collector pausado temporalmente")
+            if item.detail:
+                lines.append(f"   {item.detail[:180]}")
+        elif state == "STALE":
+            lines.append(f"🟠 {item.store_name}")
+            lines.append(
+                f"   {item.products_found} productos · último snapshot confiable"
+            )
+            if item.detail:
+                lines.append(f"   {item.detail[:180]}")
+        elif item.success:
             health = item.health_status or "UNKNOWN"
             icon = icons.get(health, "⚪")
             lines.append(f"{icon} {item.store_name}")
@@ -69,7 +98,7 @@ def build_global_run_summary(
     lines.extend(
         [
             "Los rankings extensos se envían solo cuando cambian o vence su intervalo.",
-            "Este resumen confirma qué tiendas fueron revisadas en cada ejecución.",
+            "STALE reutiliza el último catálogo confiable; PAUSED no se intenta en cada ciclo.",
         ]
     )
     return "\n".join(lines).strip()

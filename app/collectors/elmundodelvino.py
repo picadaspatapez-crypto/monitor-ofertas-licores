@@ -27,7 +27,7 @@ REQUEST_TIMEOUT = (5, 18)
 GLOBAL_PAGE_SIZE = 250
 MAX_GLOBAL_PAGES = 10
 MIN_PLAUSIBLE_PRODUCTS = 120
-GLOBAL_PAGE_DELAY_RANGE_SECONDS = (8.0, 12.0)
+GLOBAL_PAGE_DELAY_RANGE_SECONDS = (12.0, 20.0)
 RATE_LIMIT_MIN_SECONDS = 30.0
 RATE_LIMIT_MAX_SECONDS = 120.0
 RATE_LIMIT_RETRIES = 1
@@ -443,6 +443,8 @@ def _fetch_json_response(
     source: GlobalFeedSource,
     page_number: int,
     metrics: PhaseMetrics,
+    *,
+    retry_rate_limit: bool = True,
 ) -> requests.Response:
     url = source.url(page_number)
     last_delay = RATE_LIMIT_MIN_SECONDS
@@ -456,6 +458,14 @@ def _fetch_json_response(
         if response.status_code != 429:
             return response
         last_delay = _retry_after_seconds(response)
+        if not retry_rate_limit:
+            print(
+                f"⚠ El Mundo del Vino catálogo global página {page_number}: "
+                "HTTP 429 en el preflight; se corta sin solicitar otras páginas.",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise RateLimitError(url=url, delay_seconds=last_delay, attempts=1)
         if attempt < RATE_LIMIT_RETRIES:
             _rate_limit_wait(response, page_number=page_number)
             continue
@@ -472,7 +482,9 @@ def _select_global_source(
         for host in (BASE_URL, ALT_BASE_URL):
             source = GlobalFeedSource(host=host, path=path)
             try:
-                response = _fetch_json_response(session, source, 1, metrics)
+                response = _fetch_json_response(
+                    session, source, 1, metrics, retry_rate_limit=False
+                )
                 diagnostics.append(
                     f"{source.url(1)} HTTP={response.status_code} bytes={len(response.content)}"
                 )

@@ -6,6 +6,16 @@ from typing import Protocol
 from app.domain import CollectionBatch
 
 
+class CollectorPausedError(RuntimeError):
+    """Indica que un collector fue pausado deliberadamente, no que haya fallado.
+
+    Se usa para tiendas temporalmente inaccesibles que solo deben hacer un
+    preflight ocasional. El pipeline conserva sus datos históricos y no envía
+    una alerta roja en cada ejecución.
+    """
+
+
+
 @dataclass(frozen=True)
 class StoreMetadata:
     """Metadata necesaria para registrar una tienda sin tocar el pipeline."""
