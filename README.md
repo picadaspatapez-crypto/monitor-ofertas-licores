@@ -1,4 +1,6 @@
-# Monitor de Ofertas de Licores — v5.1.7
+# Monitor de Ofertas de Licores
+
+**Versión actual: v5.3.3 — Socomep Replacement.**
 
 Plataforma chilena multi-tienda para recolectar precios, comparar productos equivalentes,
 buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
@@ -9,17 +11,23 @@ buscar desde web o Telegram y seguir favoritos con alertas personalizadas.
 - Líquidos
 - El Mundo del Vino
 - Comercial JP
+- Donde La Negra
+- Distribuidora La Modelo
+- Socomep
 
-## Novedades de v5.1.7
+La Barra fue retirada del registry activo por no entregar un catálogo confiable desde Railway.
+Su collector y datos históricos se conservan únicamente para diagnóstico; la tienda queda
+marcada como inactiva y deja de participar en el buscador y comparador vigente.
 
-- El Mundo del Vino respeta HTTP 429 con una pausa controlada de 30 a 120 segundos.
-- Solo realiza un reintento tras el rate limit y no dispara HTML inmediatamente después.
-- Conserva productos ya recopilados cuando una página posterior queda limitada.
-- Una cobertura parcial suficiente se guarda como `DEGRADED`, no como fallo total.
-- Se añaden pausas preventivas de 8 a 12 segundos entre categorías Shopify.
-- El resumen multi-tienda se envía apenas terminan los collectors, antes del matching, la reindexación y los favoritos.
-- Comercial JP continúa protegido contra inserciones concurrentes duplicadas.
-- Cada collector mantiene un límite máximo de 25 minutos.
+## Novedades de v5.3.3
+
+- Socomep reemplaza a La Barra con catálogo público Jumpseller.
+- Recorre Licores, Vinos, Cervezas y Espumantes con paginación secuencial.
+- Extrae precio actual, precio de referencia, disponibilidad y enlace canónico.
+- Mantiene pausas breves entre páginas y el límite de 25 minutos por tienda.
+- La sincronización de tiendas desactiva automáticamente collectors retirados.
+- Los precios históricos de tiendas deshabilitadas se conservan, pero no aparecen como ofertas vigentes.
+- El Mundo del Vino mantiene su revisión cada 12 horas y snapshot confiable.
 
 ## Arquitectura Railway
 
@@ -28,32 +36,20 @@ Postgres
    ▲
    ├── monitor-ofertas-licores
    │      cron cada 6 horas
-   │      Licor3B + Líquidos + El Mundo del Vino + Comercial JP
+   │      7 collectors activos, máximo 4 workers
    │
    └── buscador-licores
           web /buscar + API + bot Telegram permanente
 ```
 
-Licor3B y Líquidos utilizan Playwright. El Mundo del Vino y Comercial JP utilizan HTTP directo.
-No se crean servicios nuevos ni se modifican las regiones de Railway.
-
-## Límite por tienda
-
-El valor predeterminado es 25 minutos:
-
-```env
-COLLECTOR_TIMEOUT_MINUTES=25
-```
-
-La variable es opcional. El límite se verifica durante navegación, paginación,
-scroll y solicitudes HTTP.
+El Mundo del Vino se revisa cada 12 horas. Las demás tiendas activas se revisan en cada
+ciclo de seis horas. Cada collector conserva un límite de 25 minutos.
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.1.7.md`](DEPLOY_V5.1.7.md).
+Consulta [`DEPLOY_V5.3.3.md`](DEPLOY_V5.3.3.md).
 
-No hay una migración nueva. El head de Alembic continúa en
-`0007_telegram_favorites`.
+No hay migraciones nuevas. El head de Alembic continúa en `0007_telegram_favorites`.
 
 ## Ejecución local
 
@@ -75,11 +71,3 @@ pip install -r requirements-search.txt
 ```bash
 PYTHONPATH=. python -m pytest
 ```
-
-## Tiendas activas en v5.1.3
-
-Licor3B, Líquidos, El Mundo del Vino y Comercial JP. Tost y GradoÚnico permanecen deshabilitados para diagnóstico futuro.
-
-## v5.2 — Siete tiendas
-
-La operación activa incluye Licor3B, Líquidos, El Mundo del Vino, Comercial JP, La Barra, Donde La Negra y Distribuidora La Modelo. El pipeline mantiene cuatro workers máximos y 25 minutos de presupuesto por tienda. Las nuevas publicaciones se incorporan automáticamente al matching, buscador web, bot de Telegram y favoritos.

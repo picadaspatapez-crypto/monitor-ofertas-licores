@@ -113,3 +113,9 @@ def test_phase_metrics_merge_accumulates_all_phases():
     second.add("parse", 25)
     first.merge(second)
     assert first.as_dict() == {"http": 200, "parse": 25}
+
+
+def test_resilience_interval_defaults_to_12h(monkeypatch):
+    monkeypatch.delenv("EL_MUNDO_INTERVAL_HOURS", raising=False)
+    settings = PerformanceSettings.from_env()
+    assert settings.el_mundo_interval_hours == 12

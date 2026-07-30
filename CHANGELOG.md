@@ -1,3 +1,19 @@
+# v5.3.3 — Socomep Replacement
+
+- Elimina La Barra del registry activo y de la planificación semanal.
+- Integra Socomep mediante catálogo Jumpseller público y paginación convencional.
+- Añade extracción de precio actual, precio regular, disponibilidad y secciones de origen.
+- Sincroniza `stores.is_active` con el registry en cada ejecución.
+- Excluye tiendas deshabilitadas de resultados vigentes del buscador.
+- Conserva todos los productos e historiales antiguos sin borrarlos.
+- Mantiene El Mundo del Vino cada 12 horas y el límite de 25 minutos por collector.
+- Sin migraciones ni variables obligatorias nuevas.
+
+# v5.3.1
+
+- La Barra: fallback por sitemap y fichas JSON-LD; corte rápido cuando el DOM/API no exponen catálogo.
+- La Modelo: detección dinámica de 186 páginas y tope de seguridad de 220.
+
 # v5.1.11
 
 - El Mundo del Vino usa un único catálogo global Shopify paginado.
@@ -181,3 +197,21 @@ v5.1.8 — Trusted Partial Catalog Persistence
 - Donde La Negra usa categorías WooCommerce públicas y paginación convencional.
 - La Modelo usa catálogo público con fallback al catálogo clásico.
 - Matching, búsqueda, favoritos, comparador y Telegram operan sobre las siete tiendas.
+
+## v5.3.0
+
+- Donde La Negra: Store API WooCommerce como fuente principal y Playwright como respaldo.
+- Donde La Negra: corrección de rutas y control de mayoría de edad.
+- La Barra: parser híbrido DOM + JSON/XHR, categorías específicas y detección de mantenimiento.
+- La Modelo: techo de paginación ampliado a 180, siempre bajo el presupuesto de 25 minutos.
+
+## v5.3.2 — Store Resilience
+
+- El Mundo del Vino pasa a una frecuencia independiente de 12 horas.
+- Reutilización del último snapshot HEALTHY con estado `STALE` cuando corresponde.
+- Capturas parciales de El Mundo del Vino no sustituyen datos completos anteriores.
+- Corte inmediato si la primera página global responde HTTP 429.
+- Pausas de 12–20 segundos entre páginas globales posteriores.
+- La Barra queda `PAUSED` y realiza un preflight HTTP semanal de bajo costo.
+- Estados `UPDATED`, `STALE`, `PAUSED` y `FAILED` en el resumen global.
+- Matching y favoritos pueden usar snapshots vigentes; una tienda pausada no bloquea el resto.

@@ -128,3 +128,23 @@ def test_explicit_different_volume_is_not_returned():
     finally:
         session.close()
         engine.dispose()
+
+
+def test_search_fresh_products_excludes_disabled_store():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from app.search.engine import _fresh_products
+
+    now = datetime.now(timezone.utc)
+    active = SimpleNamespace(
+        store_record=SimpleNamespace(is_active=True),
+        last_seen_at=now,
+        current_price=1000,
+    )
+    disabled = SimpleNamespace(
+        store_record=SimpleNamespace(is_active=False),
+        last_seen_at=now,
+        current_price=900,
+    )
+    assert _fresh_products([active, disabled], cutoff=now - timedelta(hours=1)) == [active]

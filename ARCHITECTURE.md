@@ -89,3 +89,8 @@ El cron inicia, aplica Alembic, ejecuta una sola pasada y termina. El buscador u
 - `/estado` consulta la última ejecución de cada tienda activa.
 - Telegram recibe un resumen compacto por ejecución aunque no cambie ningún ranking.
 - Alertas extensas y comparativas siguen sujetas a huella e intervalo de refresco.
+
+
+## v5.3.3 — Registry operativo
+
+El registry activo contiene siete tiendas: Licor3B, Líquidos, El Mundo del Vino, Comercial JP, Donde La Negra, Distribuidora La Modelo y Socomep. En cada ejecución se sincroniza `stores.is_active`; una tienda retirada conserva su historia pero queda fuera de resultados vigentes.
