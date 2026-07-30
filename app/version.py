@@ -1,3 +1,3 @@
-__version__ = "5.3.0"
+__version__ = "5.3.1"
 APP_VERSION = __version__
-RELEASE_NAME = "Stabilization: La Barra Hybrid & Donde La Negra Store API"
+RELEASE_NAME = "La Barra Sitemap Fallback & La Modelo 186 Pages"

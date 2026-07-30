@@ -5,15 +5,19 @@ import re
 import sys
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
-from urllib.parse import quote, urljoin, urlparse, urlunparse
+from urllib.parse import quote, unquote, urljoin, urlparse, urlunparse
 
+import requests
 from bs4 import BeautifulSoup, Tag
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from app.collectors.base import StoreMetadata
-from app.deadlines import ensure_budget
+from app.deadlines import bounded_request_timeout, ensure_budget
 from app.domain import CollectedProduct, CollectionBatch, CollectionStats, SectionStats
 from app.performance import (
     PerformanceSettings,
@@ -27,6 +31,11 @@ BASE_URL = "https://labarra.cl"
 MIN_PLAUSIBLE_PRODUCTS = 60
 MAX_EXPANSION_ROUNDS = 30
 PRODUCT_SELECTOR = "a[href*='/producto/']"
+SITEMAP_URL = f"{BASE_URL}/sitemap.xml"
+SITEMAP_REQUEST_TIMEOUT = (5, 15)
+MAX_SITEMAP_FILES = 30
+MAX_SITEMAP_PRODUCTS = 1500
+MAX_CONSECUTIVE_PRODUCT_FAILURES = 8
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,29 @@ def _coerce_price(value: Any) -> int | None:
         return None
     # En CLP los puntos suelen ser separadores de miles. Se evita interpretar
     # porcentajes, precios por litro y otros valores demasiado pequeños.
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return None
+    number = int(digits)
+    return number if 100 <= number <= 20_000_000 else None
+
+
+def _coerce_structured_price(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = round(float(value))
+        return number if 100 <= number <= 20_000_000 else None
+    text = str(value).strip().replace("$", "").replace("CLP", "").strip()
+    if not text:
+        return None
+    decimal_match = re.fullmatch(r"(\d+)[,.](\d{2})", text)
+    if decimal_match and decimal_match.group(2) == "00":
+        number = int(decimal_match.group(1))
+        return number if 100 <= number <= 20_000_000 else None
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", text):
+        number = int(text.replace(".", ""))
+        return number if 100 <= number <= 20_000_000 else None
     digits = re.sub(r"\D", "", text)
     if not digits:
         return None
@@ -338,6 +370,267 @@ def _looks_like_maintenance(html: str) -> bool:
     return any(marker in folded for marker in _MAINTENANCE_MARKERS)
 
 
+def _http_session() -> requests.Session:
+    session = requests.Session()
+    retry = Retry(
+        total=1,
+        connect=1,
+        read=1,
+        backoff_factor=0.7,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    session.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=2, pool_maxsize=2))
+    session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "es-CL,es;q=0.9,en;q=0.7",
+            "Cache-Control": "no-cache",
+        }
+    )
+    return session
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].casefold()
+
+
+def _parse_sitemap_xml(xml_text: str) -> tuple[list[str], list[str]]:
+    root = ET.fromstring(xml_text)
+    root_type = _xml_local_name(root.tag)
+    locations = [
+        _normalize_text(node.text or "")
+        for node in root.iter()
+        if _xml_local_name(node.tag) == "loc" and _normalize_text(node.text or "")
+    ]
+    if root_type == "sitemapindex":
+        children = sorted(
+            locations,
+            key=lambda url: ("product" not in url.casefold() and "producto" not in url.casefold(), url),
+        )
+        return children, []
+    products = [_canonical_url(url) for url in locations if _is_product_url(url)]
+    return [], list(dict.fromkeys(products))
+
+
+def _discover_sitemap_product_urls(
+    session: requests.Session, metrics: PhaseMetrics
+) -> tuple[list[str], list[str]]:
+    queue = [SITEMAP_URL]
+    seen_sitemaps: set[str] = set()
+    product_urls: list[str] = []
+    errors: list[str] = []
+    while queue and len(seen_sitemaps) < MAX_SITEMAP_FILES and len(product_urls) < MAX_SITEMAP_PRODUCTS:
+        ensure_budget("La Barra sitemap")
+        sitemap_url = queue.pop(0)
+        if sitemap_url in seen_sitemaps:
+            continue
+        seen_sitemaps.add(sitemap_url)
+        try:
+            with metrics.measure("sitemap_http"):
+                response = session.get(
+                    sitemap_url,
+                    timeout=bounded_request_timeout(SITEMAP_REQUEST_TIMEOUT),
+                )
+            response.raise_for_status()
+            children, products = _parse_sitemap_xml(response.text)
+            for product_url in products:
+                if product_url not in product_urls:
+                    product_urls.append(product_url)
+                    if len(product_urls) >= MAX_SITEMAP_PRODUCTS:
+                        break
+            for child in children:
+                if child not in seen_sitemaps and child not in queue:
+                    queue.append(child)
+            print(
+                f"La Barra sitemap: url={sitemap_url}, sitemaps_hijos={len(children)}, "
+                f"productos_acumulados={len(product_urls)}",
+                flush=True,
+            )
+        except Exception as exc:
+            errors.append(f"{sitemap_url}: {type(exc).__name__}: {exc}")
+    return product_urls, errors
+
+
+def _walk_json_products(node: Any) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    if isinstance(node, dict):
+        raw_type = node.get("@type")
+        types = raw_type if isinstance(raw_type, list) else [raw_type]
+        if any(str(item).casefold() == "product" for item in types if item):
+            found.append(node)
+        for value in node.values():
+            found.extend(_walk_json_products(value))
+    elif isinstance(node, list):
+        for value in node:
+            found.extend(_walk_json_products(value))
+    return found
+
+
+def _json_ld_price(offers: Any) -> tuple[int | None, int | None]:
+    offer_list = offers if isinstance(offers, list) else [offers]
+    current_values: list[int] = []
+    regular_values: list[int] = []
+    for offer in offer_list:
+        if not isinstance(offer, dict):
+            continue
+        for key in ("price", "lowPrice", "salePrice"):
+            parsed = _coerce_structured_price(offer.get(key))
+            if parsed is not None:
+                current_values.append(parsed)
+        for key in ("highPrice", "regularPrice", "listPrice"):
+            parsed = _coerce_structured_price(offer.get(key))
+            if parsed is not None:
+                regular_values.append(parsed)
+        specification = offer.get("priceSpecification")
+        specs = specification if isinstance(specification, list) else [specification]
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            parsed = _coerce_structured_price(spec.get("price"))
+            if parsed is None:
+                continue
+            spec_type = str(spec.get("priceType") or spec.get("@type") or "").casefold()
+            if any(token in spec_type for token in ("list", "regular", "strikethrough")):
+                regular_values.append(parsed)
+            else:
+                current_values.append(parsed)
+    if not current_values:
+        return None, None
+    current = min(current_values)
+    higher = [value for value in regular_values + current_values if value > current]
+    regular = max(higher) if higher else None
+    return current, regular
+
+
+def _name_from_product_url(url: str) -> str:
+    slug = unquote(urlparse(url).path.rstrip("/").split("/")[-1])
+    slug = re.sub(r"^\d+-", "", slug)
+    slug = slug.replace("%2B", " ").replace("+", " ").replace("-", " ")
+    return _normalize_text(slug).title()
+
+
+def _parse_product_page(html: str, url: str) -> CollectedProduct | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for script in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.IGNORECASE)}):
+        raw = script.string or script.get_text("", strip=True)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in _walk_json_products(payload):
+            name = _normalize_text(str(item.get("name") or ""))
+            current, regular = _json_ld_price(item.get("offers"))
+            if current is None:
+                continue
+            if not name or _fold(name) in {"undefined", "producto"}:
+                name = _name_from_product_url(url)
+            if len(name) < 3:
+                continue
+            return CollectedProduct(
+                store="La Barra",
+                name=name[:500],
+                url=_canonical_url(str(item.get("url") or url)),
+                current_price=current,
+                regular_price=regular,
+                discount_pct=_discount(regular, current),
+                source_sections=("Catálogo sitemap",),
+            )
+
+    title_node = soup.select_one("meta[property='og:title'], meta[name='twitter:title']")
+    name = _normalize_text(str(title_node.get("content") or "")) if isinstance(title_node, Tag) else ""
+    price_nodes = soup.select(
+        "meta[property='product:price:amount'], meta[property='og:price:amount'], "
+        "meta[itemprop='price'], [itemprop='price']"
+    )
+    prices: list[int] = []
+    for node in price_nodes:
+        raw = node.get("content") if isinstance(node, Tag) else None
+        if not raw and isinstance(node, Tag):
+            raw = node.get_text(" ", strip=True)
+        parsed = _coerce_structured_price(raw)
+        if parsed is not None:
+            prices.append(parsed)
+    if not prices:
+        prices = _price_values(_normalize_text(soup.get_text(" ", strip=True)))
+    if not prices:
+        return None
+    current = min(prices)
+    higher = [value for value in prices if value > current]
+    regular = max(higher) if higher else None
+    if not name or _fold(name) in {"undefined", "producto"}:
+        name = _name_from_product_url(url)
+    if len(name) < 3:
+        return None
+    return CollectedProduct(
+        store="La Barra",
+        name=name[:500],
+        url=_canonical_url(url),
+        current_price=current,
+        regular_price=regular,
+        discount_pct=_discount(regular, current),
+        source_sections=("Catálogo sitemap",),
+    )
+
+
+def _collect_from_sitemap() -> tuple[dict[str, CollectedProduct], PhaseMetrics, int, list[str]]:
+    session = _http_session()
+    metrics = PhaseMetrics()
+    products: dict[str, CollectedProduct] = {}
+    errors: list[str] = []
+    pages_attempted = 0
+    consecutive_failures = 0
+    try:
+        urls, sitemap_errors = _discover_sitemap_product_urls(session, metrics)
+        errors.extend(sitemap_errors)
+        if not urls:
+            return products, metrics, pages_attempted, errors
+        print(f"La Barra fallback sitemap: URLs de producto={len(urls)}", flush=True)
+        for index, url in enumerate(urls, start=1):
+            ensure_budget(f"La Barra producto sitemap {index}/{len(urls)}")
+            pages_attempted += 1
+            try:
+                with metrics.measure("product_http"):
+                    response = session.get(
+                        url,
+                        timeout=bounded_request_timeout(SITEMAP_REQUEST_TIMEOUT),
+                    )
+                response.raise_for_status()
+                product = _parse_product_page(response.text, url)
+                if product is None:
+                    consecutive_failures += 1
+                else:
+                    products[product.url] = _merge(products.get(product.url), product)
+                    consecutive_failures = 0
+            except Exception as exc:
+                consecutive_failures += 1
+                errors.append(f"{url}: {type(exc).__name__}: {exc}")
+            if index % 25 == 0 or index == len(urls):
+                print(
+                    f"La Barra sitemap productos: revisados={index}/{len(urls)}, "
+                    f"válidos={len(products)}, fallas_consecutivas={consecutive_failures}",
+                    flush=True,
+                )
+            if consecutive_failures >= MAX_CONSECUTIVE_PRODUCT_FAILURES:
+                errors.append(
+                    f"Se detuvo el fallback tras {consecutive_failures} páginas consecutivas sin producto utilizable."
+                )
+                break
+            if index % 20 == 0:
+                time.sleep(0.4)
+    finally:
+        session.close()
+    return products, metrics, pages_attempted, errors
+
+
 def _expand_catalog(page, settings: PerformanceSettings) -> int:
     rounds = 0
     stable = 0
@@ -396,6 +689,8 @@ def _collect_products() -> CollectionBatch:
     pages = cards = duplicates = 0
     aggregate = PhaseMetrics()
     maintenance_detected = False
+    sitemap_fallback_used = False
+    sitemap_errors: list[str] = []
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -434,6 +729,8 @@ def _collect_products() -> CollectionBatch:
                 response = None
                 navigation_error: Exception | None = None
                 rounds = 0
+                dom_products: dict[str, CollectedProduct] = {}
+                payload_products = 0
                 try:
                     with metrics.measure("navigation_wait"):
                         try:
@@ -456,7 +753,6 @@ def _collect_products() -> CollectionBatch:
                     with metrics.measure("parse"):
                         dom_products, section_cards = _parse_html(html, section.name)
                         section_products.update(dom_products)
-                        payload_products = 0
                         for payload in [*captured_payloads, *_script_payloads(html)]:
                             extracted = _extract_json_products(payload, section.name)
                             payload_products += len(extracted)
@@ -486,7 +782,7 @@ def _collect_products() -> CollectionBatch:
                     error_message = f"{type(exc).__name__}: {exc}"[:1000]
                     warning = True
                     print(
-                        f"✖ La Barra {section.name}: {error_message}. Continúa con la siguiente categoría.",
+                        f"✖ La Barra {section.name}: {error_message}.",
                         file=sys.stderr,
                         flush=True,
                     )
@@ -508,14 +804,55 @@ def _collect_products() -> CollectionBatch:
                     )
                 )
                 aggregate.merge(metrics)
+
                 if maintenance_detected and not all_products:
+                    break
+                if index == 1 and not all_products:
+                    print(
+                        "⚠ La Barra no expuso catálogo en la primera categoría; "
+                        "se evita recorrer las otras seis y se prueba sitemap/product pages.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                     break
         finally:
             context.close()
             browser.close()
 
+    if not all_products and not maintenance_detected:
+        sitemap_fallback_used = True
+        fallback_started = time.monotonic()
+        sitemap_products, sitemap_metrics, sitemap_pages, sitemap_errors = _collect_from_sitemap()
+        aggregate.merge(sitemap_metrics)
+        pages += sitemap_pages
+        cards += len(sitemap_products)
+        all_products.update(sitemap_products)
+        fallback_duration_ms = int((time.monotonic() - fallback_started) * 1000)
+        fallback_warning = bool(sitemap_errors) or len(sitemap_products) < MIN_PLAUSIBLE_PRODUCTS
+        section_stats.append(
+            SectionStats(
+                key="sitemap",
+                name="Catálogo sitemap",
+                url=SITEMAP_URL,
+                pages_visited=sitemap_pages,
+                cards_seen=len(sitemap_products),
+                unique_products=len(sitemap_products),
+                duplicates_removed=0,
+                duration_ms=fallback_duration_ms,
+                status="success" if sitemap_products else "failed",
+                error_message=("; ".join(sitemap_errors[-4:])[:1000] or None),
+                structural_warning=fallback_warning,
+                performance_ms=sitemap_metrics.as_dict(),
+            )
+        )
+
     duration_ms = int((time.monotonic() - started) * 1000)
-    health_status, health_score = _health(section_stats, len(all_products))
+    if sitemap_fallback_used and len(all_products) >= MIN_PLAUSIBLE_PRODUCTS:
+        health_status = "DEGRADED" if sitemap_errors else "HEALTHY"
+        health_score = 82 if sitemap_errors else 95
+    else:
+        health_status, health_score = _health(section_stats, len(all_products))
+    discovery_source = "sitemap_product_pages" if sitemap_fallback_used else "playwright_dom_json_hybrid"
     stats = CollectionStats(
         pages_visited=pages,
         cards_seen=cards,
@@ -523,9 +860,9 @@ def _collect_products() -> CollectionBatch:
         sections_discovered=len(CATALOG_SECTIONS),
         sections_visited=len(section_stats),
         sections_succeeded=sum(item.status == "success" for item in section_stats),
-        sections_failed=sum(item.status != "success" for item in section_stats),
+        sections_failed=sum(item.status == "failed" for item in section_stats),
         duplicates_removed=duplicates,
-        discovery_source="playwright_dom_json_hybrid",
+        discovery_source=discovery_source,
         health_status=health_status,
         health_score=health_score,
         structural_warnings=sum(item.structural_warning for item in section_stats),
@@ -533,9 +870,10 @@ def _collect_products() -> CollectionBatch:
         performance_ms={**aggregate.as_dict(), "total": duration_ms},
     )
     print(
-        f"Resumen La Barra: categorías={len(section_stats)}, correctas={stats.sections_succeeded}, "
-        f"fallidas={stats.sections_failed}, productos_únicos={len(all_products)}, "
-        f"mantenimiento={'sí' if maintenance_detected else 'no'}, salud={health_status}({health_score})",
+        f"Resumen La Barra: fuente={discovery_source}, categorías/procesos={len(section_stats)}, "
+        f"correctos={stats.sections_succeeded}, fallidos={stats.sections_failed}, "
+        f"productos_únicos={len(all_products)}, mantenimiento={'sí' if maintenance_detected else 'no'}, "
+        f"salud={health_status}({health_score})",
         flush=True,
     )
     if not all_products:
@@ -543,7 +881,11 @@ def _collect_products() -> CollectionBatch:
             raise RuntimeError(
                 "La Barra está temporalmente en mantenimiento; se conserva el catálogo histórico."
             )
-        raise RuntimeError("La Barra no entregó productos mediante DOM ni respuestas JSON.")
+        details = "; ".join(sitemap_errors[-3:])
+        suffix = f" Detalle fallback: {details}" if details else ""
+        raise RuntimeError(
+            "La Barra no entregó productos por DOM/JSON ni mediante sitemap." + suffix
+        )
     return CollectionBatch(products=list(all_products.values()), stats=stats)
 
 

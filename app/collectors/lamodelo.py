@@ -18,10 +18,11 @@ from app.performance import PhaseMetrics
 
 BASE_URL = "https://www.lamodelo.cl"
 REQUEST_TIMEOUT = (5, 22)
-MAX_PAGES = 180
+MAX_PAGES = 220  # tope de seguridad; el sitio informa actualmente 186 páginas
 MIN_PLAUSIBLE_PRODUCTS = 100
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
 _CODE_RE = re.compile(r"C[oó]digo\s*:\s*([A-Za-z0-9_-]+)", re.IGNORECASE)
+_PAGE_TOTAL_RE = re.compile(r"P[aá]gina\s+\d+\s+de\s+(\d+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,15 @@ def _session() -> requests.Session:
 def _normalize_text(value: str) -> str:
     return " ".join((value or "").replace("\xa0", " ").split())
 
+
+
+
+def _detected_total_pages(html: str) -> int | None:
+    match = _PAGE_TOTAL_RE.search(_normalize_text(BeautifulSoup(html, "html.parser").get_text(" ", strip=True)))
+    if not match:
+        return None
+    value = int(match.group(1))
+    return value if value > 0 else None
 
 def _price_values(text: str) -> list[int]:
     values: list[int] = []
@@ -244,8 +254,20 @@ def _collect_products() -> CollectionBatch:
     source: CatalogSource | None = None
     try:
         source, first_response, first_products, first_cards = _select_source(session, metrics)
+        detected_pages = _detected_total_pages(first_response.text)
+        target_pages = min(detected_pages or MAX_PAGES, MAX_PAGES)
+        if detected_pages:
+            print(
+                f"La Modelo paginación detectada: total={detected_pages}, "
+                f"objetivo={target_pages}, tope_seguridad={MAX_PAGES}",
+                flush=True,
+            )
+            if detected_pages > MAX_PAGES:
+                warning_message = (
+                    f"El sitio informa {detected_pages} páginas, superior al tope de seguridad {MAX_PAGES}."
+                )
         previous_signature: tuple[str, ...] = ()
-        for page_number in range(1, MAX_PAGES + 1):
+        for page_number in range(1, target_pages + 1):
             ensure_budget(f"La Modelo catálogo página {page_number}")
             if page_number == 1:
                 response = first_response
@@ -280,8 +302,16 @@ def _collect_products() -> CollectionBatch:
             if not page_products:
                 complete = True
                 break
+            if detected_pages is not None and page_number >= target_pages:
+                complete = detected_pages <= MAX_PAGES
+                break
         else:
-            warning_message = f"Se alcanzó MAX_PAGES={MAX_PAGES}."
+            if detected_pages is None:
+                warning_message = f"Se alcanzó el tope de seguridad MAX_PAGES={MAX_PAGES} sin detectar el final."
+            elif detected_pages > MAX_PAGES:
+                warning_message = (
+                    f"Se procesaron {MAX_PAGES} de {detected_pages} páginas informadas por el sitio."
+                )
     except Exception as exc:
         if not all_products:
             raise
