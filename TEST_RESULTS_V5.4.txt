@@ -1,0 +1,30 @@
+Monitor de Ofertas de Licores v5.4.0
+Catalog Intelligence & Reliability
+
+Validación local realizada sobre el paquete completo:
+
+- Suite pytest: 141 passed
+- Compilación Python: python -m compileall -q app tests — OK
+- Alembic head: 0008_catalog_intelligence
+- SQL PostgreSQL offline 0007 -> 0008: generado correctamente
+- Esquema SQLAlchemy en memoria: products, matching_rules,
+  master_price_statistics y opportunity_snapshots — OK
+
+Cobertura nueva verificada:
+
+- disponibilidad tras dos ausencias HEALTHY;
+- capturas DEGRADED no desactivan publicaciones;
+- reactivación y reposición;
+- persistencia SKU/EAN;
+- estadísticas de 30/90 días y mínimo histórico;
+- Opportunity Score y clasificación;
+- matching exacto por EAN;
+- exclusiones manuales persistentes;
+- tolerancia del scheduler y estado DUE_SOON;
+- comandos Telegram nuevos;
+- SKU público de La Modelo y Donde La Negra.
+
+Límite de esta validación:
+No se realizaron solicitudes reales a las siete tiendas ni se aplicó la
+migración sobre la base PostgreSQL de producción. Esos pasos deben confirmarse
+en el primer deploy de Railway siguiendo DEPLOY_V5.4.md.

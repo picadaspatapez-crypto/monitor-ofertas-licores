@@ -58,3 +58,40 @@ variante, volumen y cantidad. El umbral predeterminado continúa en 86 %.
 
 El comparador toma como máximo una publicación —la más barata— por tienda dentro de
 cada producto maestro y vuelve a validar todos los pares antes de publicar una oportunidad.
+
+---
+
+# Refuerzos v5.4
+
+## Identificadores estructurados
+
+Antes de depender del texto, el reconciliador busca:
+
+1. EAN no vacío e idéntico;
+2. SKU idéntico junto con marca y volumen compatibles;
+3. reglas manuales persistentes;
+4. matching textual conservador.
+
+Un SKU no se considera global por sí solo porque distintas tiendas pueden
+reutilizar la misma numeración interna.
+
+## Reglas manuales
+
+Equivalencia confirmada:
+
+```bash
+python -m app.matching.rules equivalence \
+  "JW Black 750 cc" \
+  "Johnnie Walker Black Label 750 ml"
+```
+
+Exclusión permanente:
+
+```bash
+python -m app.matching.rules exclusion \
+  "Johnnie Walker Black + 2 vasos" \
+  "Johnnie Walker Black Label 750 ml"
+```
+
+Las exclusiones tienen prioridad y evitan que la pareja vuelva a unificarse en
+ejecuciones posteriores.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.search.engine import SearchResult
 
@@ -10,7 +11,10 @@ def format_clp(value: int) -> str:
 
 
 def format_datetime_cl(value: datetime) -> str:
-    return value.astimezone().strftime("%d-%m-%Y %H:%M")
+    try:
+        return value.astimezone(ZoneInfo("America/Santiago")).strftime("%d-%m-%Y %H:%M")
+    except Exception:
+        return value.astimezone().strftime("%d-%m-%Y %H:%M")
 
 
 def result_to_dict(result: SearchResult) -> dict:
@@ -25,6 +29,14 @@ def result_to_dict(result: SearchResult) -> dict:
         "saving_clp": result.saving_clp,
         "saving_pct": round(result.saving_pct * 100, 1),
         "winner_store": result.winner.store_name,
+        "min_30d": result.min_30d,
+        "avg_30d": result.avg_30d,
+        "min_90d": result.min_90d,
+        "avg_90d": result.avg_90d,
+        "historical_min": result.historical_min,
+        "days_at_current_price": result.days_at_current_price,
+        "opportunity_score": result.opportunity_score,
+        "opportunity_classification": result.opportunity_classification,
         "offers": [
             {
                 "product_id": offer.product_id,

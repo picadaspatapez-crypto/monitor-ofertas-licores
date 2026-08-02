@@ -66,6 +66,10 @@ class Settings:
     telegram_winner_change_limit: int
     favorite_min_drop_clp: int
     favorite_alert_limit: int
+    availability_missing_threshold: int
+    weekly_health_report: bool
+    weekly_health_interval_hours: int
+    opportunity_report_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -90,15 +94,25 @@ class Settings:
                 "CROSS_STORE_MATCH_MIN_CONFIDENCE_PERCENT", 86.0
             ),
             telegram_comparison_limit=_positive_int(
-                "TELEGRAM_COMPARISON_LIMIT", 20
+                "TELEGRAM_COMPARISON_LIMIT", 30
             ),
             telegram_winner_change_limit=_positive_int(
                 "TELEGRAM_WINNER_CHANGE_LIMIT", 10
             ),
             favorite_min_drop_clp=_non_negative_int(
-                "FAVORITE_MIN_DROP_CLP", 1
+                "FAVORITE_MIN_DROP_CLP", 10
             ),
             favorite_alert_limit=_positive_int(
                 "FAVORITE_ALERT_LIMIT", 20
+            ),
+            availability_missing_threshold=_positive_int(
+                "AVAILABILITY_MISSING_THRESHOLD", 2
+            ),
+            weekly_health_report=_bool_env("WEEKLY_HEALTH_REPORT", True),
+            weekly_health_interval_hours=_positive_int(
+                "WEEKLY_HEALTH_INTERVAL_HOURS", 168
+            ),
+            opportunity_report_limit=_positive_int(
+                "OPPORTUNITY_REPORT_LIMIT", 20
             ),
         )

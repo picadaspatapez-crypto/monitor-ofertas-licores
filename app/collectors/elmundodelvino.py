@@ -75,6 +75,8 @@ query ElMundoCatalog($first: Int!, $after: String, $variantsFirst: Int!) @inCont
         availableForSale
         price { amount currencyCode }
         compareAtPrice { amount currencyCode }
+        sku
+        barcode
       }
       variants(first: $variantsFirst) {
         nodes {
@@ -82,6 +84,8 @@ query ElMundoCatalog($first: Int!, $after: String, $variantsFirst: Int!) @inCont
           availableForSale
           price { amount currencyCode }
           compareAtPrice { amount currencyCode }
+          sku
+          barcode
         }
       }
     }
@@ -419,14 +423,14 @@ def _parse_json(
         ]
         if not available_variants:
             continue
-        prices = [
-            amount
+        priced_variants = [
+            (amount, item)
             for item in available_variants
             if (amount := _json_money(item.get("price"))) is not None
         ]
-        if not prices:
+        if not priced_variants:
             continue
-        current = min(prices)
+        current, chosen_variant = min(priced_variants, key=lambda pair: pair[0])
         compare_prices = [
             amount
             for item in available_variants
@@ -443,6 +447,8 @@ def _parse_json(
             regular_price=regular,
             discount_pct=_discount(regular, current),
             source_sections=(category,),
+            sku=_normalize_text(str(chosen_variant.get("sku") or ""))[:120] or None,
+            ean=re.sub(r"\D", "", str(chosen_variant.get("barcode") or ""))[:32] or None,
         )
     return products, candidates
 
@@ -643,6 +649,8 @@ def _parse_storefront_graphql(
                         "available": raw_variant.get("availableForSale", True),
                         "price": _money_amount(raw_variant.get("price")),
                         "compare_at_price": _money_amount(raw_variant.get("compareAtPrice")),
+                        "sku": raw_variant.get("sku"),
+                        "barcode": raw_variant.get("barcode"),
                     }
                 )
 
@@ -655,6 +663,8 @@ def _parse_storefront_graphql(
                         "available": selected.get("availableForSale", True),
                         "price": _money_amount(selected.get("price")),
                         "compare_at_price": _money_amount(selected.get("compareAtPrice")),
+                        "sku": selected.get("sku"),
+                        "barcode": selected.get("barcode"),
                     }
                 )
 

@@ -54,6 +54,8 @@ class PerformanceSettings:
     quick_settle_ms: int = 250
     collector_timeout_minutes: int = 25
     el_mundo_interval_hours: int = 12
+    scheduler_grace_minutes: int = 15
+    app_timezone: str = "America/Santiago"
 
     @classmethod
     def from_env(cls) -> "PerformanceSettings":
@@ -75,6 +77,10 @@ class PerformanceSettings:
             el_mundo_interval_hours=_positive_int(
                 "EL_MUNDO_INTERVAL_HOURS", 12, minimum=1, maximum=168
             ),
+            scheduler_grace_minutes=_positive_int(
+                "SCHEDULER_GRACE_MINUTES", 15, minimum=1, maximum=60
+            ),
+            app_timezone=os.getenv("APP_TIMEZONE", "America/Santiago").strip() or "America/Santiago",
         )
 
 

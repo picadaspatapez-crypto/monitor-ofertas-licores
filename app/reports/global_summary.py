@@ -18,6 +18,9 @@ class ExecutionView(Protocol):
     error_message: str | None
     execution_state: str
     detail: str | None
+    source: str | None
+    marked_unavailable: int
+    reactivated: int
 
 
 def _duration(milliseconds: int) -> str:
@@ -36,6 +39,7 @@ def build_global_run_summary(
     ordered = sorted(executions, key=lambda item: item.store_name.casefold())
     updated = sum(item.execution_state == "UPDATED" and item.success for item in ordered)
     stale = sum(item.execution_state == "STALE" and item.success for item in ordered)
+    due_soon = sum(item.execution_state == "DUE_SOON" and item.success for item in ordered)
     paused = sum(item.execution_state == "PAUSED" for item in ordered)
     failed = sum(item.execution_state == "FAILED" or (
         not item.success and item.execution_state not in {"PAUSED"}
@@ -44,7 +48,8 @@ def build_global_run_summary(
         "📊 Revisión multi-tienda completada",
         "",
         f"Tiendas actualizadas: {updated}",
-        f"Tiendas con datos vigentes: {updated + stale}",
+        f"Tiendas con datos vigentes: {updated + stale + due_soon}",
+        f"Revisiones programadas pendientes: {due_soon}",
         f"Tiendas pausadas: {paused}",
         f"Tiendas fallidas: {failed}",
         f"Duración collectors: {_duration(wall_duration_ms)}",
@@ -56,10 +61,18 @@ def build_global_run_summary(
         "BROKEN": "🔴",
         "STALE": "🟠",
         "PAUSED": "⏸",
+        "DUE_SOON": "🕒",
     }
     for item in ordered:
         state = item.execution_state
-        if state == "PAUSED":
+        if state == "DUE_SOON":
+            lines.append(f"🕒 {item.store_name}")
+            lines.append(f"   {item.products_found} productos · catálogo vigente")
+            if item.source:
+                lines.append(f"   Fuente: {item.source}")
+            if item.detail:
+                lines.append(f"   {item.detail[:220]}")
+        elif state == "PAUSED":
             lines.append(f"⏸ {item.store_name}")
             lines.append("   Collector pausado temporalmente")
             if item.detail:
@@ -87,7 +100,13 @@ def build_global_run_summary(
                 changes.append(f"{item.new_products} nuevos")
             if item.sections_failed:
                 changes.append(f"{item.sections_failed} categorías fallidas")
+            if item.marked_unavailable:
+                changes.append(f"{item.marked_unavailable} retirados confirmados")
+            if item.reactivated:
+                changes.append(f"{item.reactivated} repuestos")
             lines.append(f"   Cambios: {', '.join(changes) if changes else 'ninguno'}")
+            if item.source:
+                lines.append(f"   Fuente: {item.source}")
         else:
             lines.append(f"🔴 {item.store_name}")
             lines.append("   Collector fallido")
@@ -98,7 +117,7 @@ def build_global_run_summary(
     lines.extend(
         [
             "Los rankings extensos se envían solo cuando cambian o vence su intervalo.",
-            "STALE reutiliza el último catálogo confiable; PAUSED no se intenta en cada ciclo.",
+            "STALE conserva el último catálogo tras un fallo; DUE SOON aún no vence; PAUSED no se intenta en cada ciclo.",
         ]
     )
     return "\n".join(lines).strip()

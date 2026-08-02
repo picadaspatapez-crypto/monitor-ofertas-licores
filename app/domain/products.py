@@ -15,6 +15,8 @@ class CollectedProduct:
     regular_price: Optional[int]
     discount_pct: float
     source_sections: tuple[str, ...] = ()
+    sku: str | None = None
+    ean: str | None = None
 
 
 @dataclass(frozen=True)

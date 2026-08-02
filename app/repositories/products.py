@@ -147,6 +147,12 @@ def save_product(
             current_price=item.current_price,
             regular_price=item.regular_price,
             discount_pct=item.discount_pct,
+            sku=item.sku,
+            ean=item.ean,
+            is_available=True,
+            missing_streak=0,
+            last_available_at=utcnow(),
+            last_confirmed_run_id=scrape_run.id,
         )
         session.add(product)
         session.flush()
@@ -156,9 +162,13 @@ def save_product(
         product.current_price = item.current_price
         product.regular_price = item.regular_price
         product.discount_pct = item.discount_pct
+        product.sku = item.sku or product.sku
+        product.ean = item.ean or product.ean
         product.last_seen_at = utcnow()
 
     master = _get_or_create_master_product(session, item.name)
+    if item.ean and not master.ean:
+        master.ean = item.ean
     _link_master_product(session, product, master)
     session.add(
         PriceObservation(

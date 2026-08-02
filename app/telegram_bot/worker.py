@@ -13,6 +13,7 @@ from app.favorites import (
     list_favorites,
     resolve_favorite_query,
 )
+from app.intelligence.queries import top_opportunities
 from app.models import MasterProduct, Product, ScrapeRun, Store, TelegramFavorite
 from app.search.web import SearchApplication
 from app.telegram_bot.api import TelegramAPI, TelegramAPIError
@@ -20,6 +21,9 @@ from app.telegram_bot.commands import BotCommand, parse_command
 from app.telegram_bot.config import TelegramBotSettings
 from app.telegram_bot.formatting import (
     favorite_delete_help_message,
+    format_history_result,
+    format_opportunities,
+    history_help_message,
     favorite_help_message,
     favorite_target_help_message,
     format_favorite_deleted,
@@ -33,7 +37,12 @@ from app.telegram_bot.formatting import (
     StoreStatusView,
     unauthorized_message,
 )
-from app.telegram_bot.state import load_next_update_id, save_next_update_id
+from app.telegram_bot.state import (
+    load_next_update_id,
+    load_search_page,
+    save_next_update_id,
+    save_search_page,
+)
 
 
 class TelegramSearchBot:
@@ -62,6 +71,15 @@ class TelegramSearchBot:
 
     def _authorized(self, chat_id: int) -> bool:
         return chat_id in self.settings.allowed_chat_ids
+
+    def _search_catalog(self, query: str, *, limit: int, offset: int = 0):
+        try:
+            return self.application.search(query, limit=limit, offset=offset)
+        except TypeError as exc:
+            # Compatibilidad con implementaciones antiguas y dobles de prueba.
+            if "offset" not in str(exc) or offset:
+                raise
+            return self.application.search(query, limit=limit)
 
     def _send(
         self,
@@ -96,9 +114,13 @@ class TelegramSearchBot:
             )
             fresh_products = int(
                 session.scalar(
-                    select(func.count(Product.id)).where(
+                    select(func.count(Product.id))
+                    .join(Store, Store.id == Product.store_id)
+                    .where(
                         Product.current_price > 0,
                         Product.last_seen_at >= cutoff,
+                        Product.is_available.is_(True),
+                        Store.is_active.is_(True),
                     )
                 )
                 or 0
@@ -125,13 +147,40 @@ class TelegramSearchBot:
                 finished_at = run.finished_at if run is not None else None
                 if finished_at is not None and finished_at.tzinfo is None:
                     finished_at = finished_at.replace(tzinfo=timezone.utc)
+                real_run = session.scalar(
+                    select(ScrapeRun)
+                    .where(
+                        ScrapeRun.store_id == store.id,
+                        ScrapeRun.status == "success",
+                        ScrapeRun.health_status == "HEALTHY",
+                        ScrapeRun.finished_at.is_not(None),
+                    )
+                    .order_by(ScrapeRun.finished_at.desc(), ScrapeRun.id.desc())
+                    .limit(1)
+                )
+                last_real_at = real_run.finished_at if real_run is not None else None
+                if last_real_at is not None and last_real_at.tzinfo is None:
+                    last_real_at = last_real_at.replace(tzinfo=timezone.utc)
+                interval_hours = 12 if store.connector_key == "elmundodelvino" else 6
+                next_due_at = (
+                    finished_at + timedelta(hours=interval_hours)
+                    if finished_at is not None
+                    else None
+                )
+                source = None
+                source_run = real_run or run
+                if source_run is not None and isinstance(source_run.metrics_json, dict):
+                    source = source_run.metrics_json.get("discovery_source")
                 store_views.append(
                     StoreStatusView(
                         name=store.name,
                         run_status=run.status if run is not None else "never",
                         health_status=run.health_status if run is not None else None,
-                        products_found=int(run.products_found or 0) if run is not None else 0,
+                        products_found=int((real_run or run).products_found or 0) if (real_run or run) is not None else 0,
                         finished_at=finished_at,
+                        last_real_at=last_real_at,
+                        next_due_at=next_due_at,
+                        source=str(source) if source else None,
                     )
                 )
         if latest_seen_at is not None and latest_seen_at.tzinfo is None:
@@ -159,6 +208,13 @@ class TelegramSearchBot:
                 text=search_help_message(),
             )
             return
+        if command.name == "history_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=history_help_message(),
+            )
+            return
         if command.name == "status":
             active, fresh, latest, favorites, stores = self._catalog_status(chat_id)
             self._send(
@@ -172,6 +228,39 @@ class TelegramSearchBot:
                     favorites=favorites,
                     stores=stores,
                 ),
+            )
+            return
+        if command.name == "history":
+            try:
+                results = self._search_catalog(command.query, limit=1)
+                text = format_history_result(command.query, results[0] if results else None)
+            except Exception as exc:
+                print(f"BOT history error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar el historial en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name in {"opportunities", "best_prices"}:
+            try:
+                with self.application.SessionLocal() as session:
+                    views = top_opportunities(
+                        session,
+                        limit=20,
+                        minimum_score=70.0 if command.name == "opportunities" else 0.0,
+                        order="score" if command.name == "opportunities" else "saving",
+                    )
+                text, markup = format_opportunities(
+                    views,
+                    title=(
+                        "Oportunidades verificadas"
+                        if command.name == "opportunities"
+                        else "Mejores diferencias entre tiendas"
+                    ),
+                )
+            except Exception as exc:
+                print(f"BOT opportunities error ({type(exc).__name__}: {exc}).", flush=True)
+                text, markup = "⚠️ No pude consultar las oportunidades.", None
+            self._send(
+                chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup
             )
             return
         if command.name == "favorite_help":
@@ -255,13 +344,41 @@ class TelegramSearchBot:
                 text = "⚠️ No pude eliminar el favorito en este momento."
             self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
-        if command.name == "search":
+        if command.name in {"search", "search_more"}:
             try:
-                results = self.application.search(
-                    command.query,
-                    limit=self.settings.result_limit,
+                if command.name == "search":
+                    query, offset = command.query, 0
+                else:
+                    with self.application.SessionLocal() as session:
+                        saved_page = load_search_page(session, chat_id=chat_id)
+                    if saved_page is None:
+                        self._send(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text="No hay una búsqueda anterior. Usa /buscar seguido del producto.",
+                        )
+                        return
+                    query, offset = saved_page
+                requested = self.settings.result_limit
+                page = self._search_catalog(
+                    query,
+                    limit=requested + 1,
+                    offset=offset,
                 )
-                text, markup = format_search_results(command.query, results)
+                has_more = len(page) > requested
+                results = page[:requested]
+                next_offset = offset + len(results)
+                with self.application.SessionLocal() as session:
+                    save_search_page(
+                        session, chat_id=chat_id, query=query, offset=next_offset
+                    )
+                    session.commit()
+                text, markup = format_search_results(
+                    query,
+                    results,
+                    start_index=offset + 1,
+                    has_more=has_more,
+                )
             except Exception as exc:
                 print(
                     f"BOT search error ({type(exc).__name__}: {exc}).",

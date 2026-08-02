@@ -8,7 +8,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import MasterProduct, Product
+from app.models import MasterPriceStatistic, MasterProduct, OpportunitySnapshot, Product
 from app.search.normalization import SearchQuery, normalize_search_text, parse_search_query
 
 
@@ -38,6 +38,14 @@ class SearchResult:
     runner_up: SearchOffer | None
     saving_clp: int
     saving_pct: float
+    min_30d: int | None = None
+    avg_30d: float | None = None
+    min_90d: int | None = None
+    avg_90d: float | None = None
+    historical_min: int | None = None
+    days_at_current_price: int = 0
+    opportunity_score: float | None = None
+    opportunity_classification: str | None = None
 
 
 def _token_score(query_tokens: tuple[str, ...], candidate_tokens: set[str]) -> float:
@@ -111,6 +119,8 @@ def _fresh_products(
     for product in products:
         if product.store_record is not None and not product.store_record.is_active:
             continue
+        if not bool(getattr(product, "is_available", True)):
+            continue
         seen_at = product.last_seen_at
         if seen_at is None:
             continue
@@ -126,6 +136,7 @@ def search_products(
     query: str,
     *,
     limit: int = 8,
+    offset: int = 0,
     max_age_hours: int = 72,
     minimum_score: float = 0.34,
 ) -> list[SearchResult]:
@@ -162,8 +173,29 @@ def search_products(
         )
     )
 
+    page_limit = max(1, min(limit, 30))
+    start = max(0, int(offset))
+    selected_scored = scored[start : start + page_limit]
+    selected_ids = [int(item[1].id) for item in selected_scored]
+    stats_map = {
+        int(item.master_product_id): item
+        for item in session.scalars(
+            select(MasterPriceStatistic).where(
+                MasterPriceStatistic.master_product_id.in_(selected_ids)
+            )
+        )
+    } if selected_ids else {}
+    opportunity_map = {
+        int(item.master_product_id): item
+        for item in session.scalars(
+            select(OpportunitySnapshot).where(
+                OpportunitySnapshot.master_product_id.in_(selected_ids)
+            )
+        )
+    } if selected_ids else {}
+
     results: list[SearchResult] = []
-    for score, master, products in scored[: max(1, min(limit, 20))]:
+    for score, master, products in selected_scored:
         cheapest_by_store: dict[int | str, Product] = {}
         for product in products:
             store_key: int | str = product.store_id or product.store
@@ -221,6 +253,14 @@ def search_products(
                 runner_up=runner_up,
                 saving_clp=saving_clp,
                 saving_pct=saving_pct,
+                min_30d=(stats_map[int(master.id)].min_30d if int(master.id) in stats_map else None),
+                avg_30d=(stats_map[int(master.id)].avg_30d if int(master.id) in stats_map else None),
+                min_90d=(stats_map[int(master.id)].min_90d if int(master.id) in stats_map else None),
+                avg_90d=(stats_map[int(master.id)].avg_90d if int(master.id) in stats_map else None),
+                historical_min=(stats_map[int(master.id)].historical_min if int(master.id) in stats_map else None),
+                days_at_current_price=(int(stats_map[int(master.id)].days_at_current_price or 0) if int(master.id) in stats_map else 0),
+                opportunity_score=(float(opportunity_map[int(master.id)].score) if int(master.id) in opportunity_map else None),
+                opportunity_classification=(opportunity_map[int(master.id)].classification if int(master.id) in opportunity_map else None),
             )
         )
     return results

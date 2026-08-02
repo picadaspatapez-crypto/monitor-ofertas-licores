@@ -66,4 +66,5 @@ def test_la_modelo_parser_uses_code_and_unit_price():
     assert item.store == "Distribuidora La Modelo"
     assert item.current_price == 6960
     assert item.regular_price is None
+    assert item.sku == "317"
     assert "q=317" in item.url

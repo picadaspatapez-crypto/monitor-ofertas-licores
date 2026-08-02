@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.matching import build_matching_plan, build_product_signature, normalize_product_name
-from app.models import MasterProduct, PriceObservation, Product, ProductMatch
+from app.matching import MatchCandidate, build_matching_plan, build_product_signature, normalize_product_name
+from app.matching.rules import rule_key
+from app.models import MatchingRule, MasterProduct, PriceObservation, Product, ProductMatch
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,73 @@ def _get_match(session: Session, product_id: int) -> ProductMatch | None:
     )
 
 
+def _augmented_candidates(session: Session, products: list[Product], plan) -> tuple[MatchCandidate, ...]:
+    products_by_id = {int(product.id): product for product in products}
+    candidates: dict[tuple[int, int], MatchCandidate] = {
+        tuple(sorted((item.left_id, item.right_id))): item for item in plan.candidates
+    }
+
+    def add_pair(left: Product, right: Product, *, confidence: float, method: str) -> None:
+        if left.store_id is None or right.store_id is None or left.store_id == right.store_id:
+            return
+        pair = tuple(sorted((int(left.id), int(right.id))))
+        current = candidates.get(pair)
+        candidate = MatchCandidate(pair[0], pair[1], confidence, method)
+        if current is None or candidate.confidence > current.confidence:
+            candidates[pair] = candidate
+
+    # EAN is globally meaningful. SKU is accepted only when brand and volume also agree.
+    by_ean: dict[str, list[Product]] = {}
+    by_sku: dict[str, list[Product]] = {}
+    signatures = {int(product.id): build_product_signature(product.name) for product in products}
+    for product in products:
+        if product.ean:
+            by_ean.setdefault(product.ean.strip(), []).append(product)
+        if product.sku:
+            by_sku.setdefault(product.sku.strip().casefold(), []).append(product)
+    for group in by_ean.values():
+        for index, left in enumerate(group):
+            for right in group[index + 1 :]:
+                add_pair(left, right, confidence=1.0, method="ean_exact")
+    for group in by_sku.values():
+        for index, left in enumerate(group):
+            for right in group[index + 1 :]:
+                left_sig, right_sig = signatures[int(left.id)], signatures[int(right.id)]
+                if (
+                    left_sig.volume_ml is not None
+                    and left_sig.volume_ml == right_sig.volume_ml
+                    and left_sig.brand
+                    and left_sig.brand == right_sig.brand
+                ):
+                    add_pair(left, right, confidence=0.995, method="sku_brand_volume_exact")
+
+    active_rules = list(
+        session.scalars(select(MatchingRule).where(MatchingRule.is_active.is_(True)))
+    )
+    keys = {int(product.id): rule_key(product.name) for product in products}
+    exclusions = {
+        tuple(sorted((rule.left_key, rule.right_key)))
+        for rule in active_rules
+        if rule.rule_type == "exclusion"
+    }
+    equivalences = {
+        tuple(sorted((rule.left_key, rule.right_key)))
+        for rule in active_rules
+        if rule.rule_type == "equivalence"
+    }
+    for pair in list(candidates):
+        left_key, right_key = keys[pair[0]], keys[pair[1]]
+        if tuple(sorted((left_key, right_key))) in exclusions:
+            candidates.pop(pair, None)
+    for index, left in enumerate(products):
+        for right in products[index + 1 :]:
+            key_pair = tuple(sorted((keys[int(left.id)], keys[int(right.id)])))
+            if key_pair in equivalences:
+                add_pair(left, right, confidence=1.0, method="manual_equivalence")
+
+    return tuple(sorted(candidates.values(), key=lambda item: (item.left_id, item.right_id)))
+
+
 def reconcile_cross_store_matches(
     session: Session,
     *,
@@ -67,7 +135,8 @@ def reconcile_cross_store_matches(
 ) -> ReconciliationSummary:
     products = products_observed_in_runs(session, run_ids)
     plan = build_matching_plan(products, minimum_confidence=minimum_confidence)
-    if not plan.candidates:
+    candidates = _augmented_candidates(session, products, plan)
+    if not candidates:
         return ReconciliationSummary(
             total_products=plan.total_products,
             eligible_products=plan.eligible_products,
@@ -85,7 +154,7 @@ def reconcile_cross_store_matches(
     products_by_id = {int(product.id): product for product in products}
     union = _UnionFind(list(products_by_id))
     edge_by_pair = {}
-    for candidate in plan.candidates:
+    for candidate in candidates:
         union.union(candidate.left_id, candidate.right_id)
         edge_by_pair[tuple(sorted((candidate.left_id, candidate.right_id)))] = candidate
 
@@ -95,13 +164,14 @@ def reconcile_cross_store_matches(
 
     products_relinked = 0
     merged_master_ids: set[int] = set()
-    exact_matches = sum(candidate.method == "alias_exact" for candidate in plan.candidates)
-    fuzzy_matches = len(plan.candidates) - exact_matches
+    exact_methods = {"alias_exact", "ean_exact", "sku_brand_volume_exact", "manual_equivalence"}
+    exact_matches = sum(candidate.method in exact_methods for candidate in candidates)
+    fuzzy_matches = len(candidates) - exact_matches
 
     for product_ids in groups.values():
         group_edges = [
             candidate
-            for candidate in plan.candidates
+            for candidate in candidates
             if candidate.left_id in product_ids and candidate.right_id in product_ids
         ]
         if not group_edges:
@@ -165,14 +235,14 @@ def reconcile_cross_store_matches(
                         master_product_id=target_id,
                         confidence=confidence,
                         matching_method=method,
-                        review_status="automatic",
+                        review_status=("manual" if method == "manual_equivalence" else "automatic"),
                     )
                 )
             else:
                 match.master_product_id = target_id
                 match.confidence = confidence
                 match.matching_method = method
-                match.review_status = "automatic"
+                match.review_status = "manual" if method == "manual_equivalence" else "automatic"
 
     session.flush()
     masters_merged = 0
@@ -196,7 +266,7 @@ def reconcile_cross_store_matches(
         skipped_unknown_volume=plan.skipped_unknown_volume,
         candidate_pairs=plan.candidate_pairs,
         ambiguous_products=plan.ambiguous_products,
-        matched_pairs=len(plan.candidates),
+        matched_pairs=len(candidates),
         exact_matches=exact_matches,
         fuzzy_matches=fuzzy_matches,
         products_relinked=products_relinked,

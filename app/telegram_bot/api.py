@@ -63,6 +63,10 @@ class TelegramAPI:
             {"command": "avisar", "description": "Crear una alerta de precio objetivo"},
             {"command": "misfavoritos", "description": "Ver tus productos seguidos"},
             {"command": "eliminarfavorito", "description": "Eliminar un favorito por ID"},
+            {"command": "historial", "description": "Ver historial de un producto"},
+            {"command": "oportunidades", "description": "Ver Opportunity Score alto"},
+            {"command": "mejores", "description": "Ver mayores diferencias de precio"},
+            {"command": "mas", "description": "Mostrar la siguiente página"},
             {"command": "estado", "description": "Ver estado del catálogo"},
             {"command": "ayuda", "description": "Mostrar ayuda y ejemplos"},
         ]

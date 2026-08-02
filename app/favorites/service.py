@@ -85,7 +85,9 @@ def resolve_favorite_query(
 def _snapshot_from_products(products: Iterable[Product]) -> FavoriteSnapshot:
     cheapest_by_store: dict[str, FavoriteOffer] = {}
     for product in products:
-        if product.current_price <= 0:
+        if product.current_price <= 0 or not bool(product.is_available):
+            continue
+        if product.store_record is not None and not product.store_record.is_active:
             continue
         store_name = (
             product.store_record.name if product.store_record is not None else product.store
@@ -123,6 +125,7 @@ def current_snapshot(
                 Product.master_product_id == master_product_id,
                 Product.last_seen_at >= cutoff,
                 Product.current_price > 0,
+                Product.is_available.is_(True),
             )
         ).unique()
     )
@@ -145,6 +148,7 @@ def _snapshot_for_runs(
                 Product.master_product_id == master_product_id,
                 PriceObservation.scrape_run_id.in_(run_ids),
                 PriceObservation.price > 0,
+                Product.is_available.is_(True),
             )
         ).unique()
     )

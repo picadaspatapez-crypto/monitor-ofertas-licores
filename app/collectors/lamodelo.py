@@ -200,6 +200,7 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
             current_price=current,
             regular_price=None,
             discount_pct=0.0,
+            sku=code[:120],
             source_sections=("Catálogo general",),
         )
     return products, candidates

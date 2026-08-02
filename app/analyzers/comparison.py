@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.matching import build_product_signature, compare_signatures
-from app.models import MasterProduct, PriceObservation, Product, ProductMatch, Store
+from app.intelligence.opportunity import OpportunityComponents, classify_opportunity, opportunity_score
+from app.models import MasterPriceStatistic, MasterProduct, PriceObservation, Product, ProductMatch, Store
 from app.repositories.matching import products_observed_in_runs
 
 
@@ -37,6 +39,15 @@ class PriceComparison:
     previous_winner_store_name: str | None
     winner_changed: bool
     is_tie: bool
+    history_min_90d: int | None = None
+    history_avg_90d: float | None = None
+    history_median_90d: float | None = None
+    days_at_current_price: int = 0
+    opportunity_score: float = 0.0
+    opportunity_classification: str = "No destacada"
+    history_position: float = 0.0
+    freshness_score: float = 0.0
+    scarcity_score: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -114,6 +125,14 @@ def analyze_cross_store_prices(
             select(ProductMatch).where(ProductMatch.store_product_id.in_(product_ids))
         )
     }
+    price_stats = {
+        int(item.master_product_id): item
+        for item in session.scalars(
+            select(MasterPriceStatistic).where(
+                MasterPriceStatistic.master_product_id.in_(masters)
+            )
+        )
+    }
     previous_prices = _previous_prices(
         session,
         product_ids=product_ids,
@@ -148,6 +167,27 @@ def analyze_cross_store_prices(
             for right_index in range(left_index + 1, len(selected)):
                 left = selected[left_index]
                 right = selected[right_index]
+                left_match = matches.get(int(left.id))
+                right_match = matches.get(int(right.id))
+                trusted_methods = {
+                    "manual_equivalence",
+                    "ean_exact",
+                    "sku_brand_volume_exact",
+                }
+                trusted = bool(
+                    left_match
+                    and right_match
+                    and left_match.master_product_id == right_match.master_product_id
+                    and (
+                        left_match.matching_method in trusted_methods
+                        or right_match.matching_method in trusted_methods
+                    )
+                )
+                if trusted:
+                    pair_confidences.append(
+                        min(float(left_match.confidence), float(right_match.confidence))
+                    )
+                    continue
                 score = compare_signatures(
                     build_product_signature(left.name),
                     build_product_signature(right.name),
@@ -157,8 +197,8 @@ def analyze_cross_store_prices(
                     verified = False
                     break
                 stored_confidence = min(
-                    float(matches.get(int(left.id)).confidence) if matches.get(int(left.id)) else score.confidence,
-                    float(matches.get(int(right.id)).confidence) if matches.get(int(right.id)) else score.confidence,
+                    float(left_match.confidence) if left_match else score.confidence,
+                    float(right_match.confidence) if right_match else score.confidence,
                 )
                 pair_confidences.append(min(score.confidence, stored_confidence))
             if not verified:
@@ -224,6 +264,47 @@ def analyze_cross_store_prices(
             master.canonical_name if master is not None else offers[0].product_name
         )
         volume_ml = master.volume_ml if master is not None else build_product_signature(offers[0].product_name).volume_ml
+        stat = price_stats.get(master_id)
+        history_min_90d = stat.min_90d if stat is not None else None
+        history_avg_90d = stat.avg_90d if stat is not None else None
+        history_median_90d = stat.median_90d if stat is not None else None
+        days_at_current_price = int(stat.days_at_current_price or 0) if stat is not None else 0
+        history_position = 0.0
+        freshness_score = 0.0
+        scarcity_score = 0.0
+        score_value = 0.0
+        classification = "No destacada"
+        if winner is not None:
+            if history_avg_90d and history_avg_90d > 0:
+                history_position = max(
+                    0.0, min(1.0, ((history_avg_90d - winner.price) / history_avg_90d) / 0.25)
+                )
+            if history_min_90d and winner.price <= history_min_90d:
+                history_position = max(history_position, 0.95)
+            winner_product = next(
+                (product for product in selected if int(product.id) == winner.product_id),
+                None,
+            )
+            if winner_product is not None and winner_product.last_seen_at is not None:
+                seen = winner_product.last_seen_at
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=timezone.utc)
+                age_hours = max(0.0, (datetime.now(timezone.utc) - seen).total_seconds() / 3600)
+                freshness_score = (
+                    1.0 if age_hours <= 12 else 0.8 if age_hours <= 24 else 0.5 if age_hours <= 48 else 0.2
+                )
+            scarcity_score = max(0.0, min(1.0, (7 - len(offers)) / 5))
+            score_value = opportunity_score(
+                OpportunityComponents(
+                    market_saving=min(1.0, saving_pct / 0.30),
+                    history_position=history_position,
+                    match_confidence=min(pair_confidences) if pair_confidences else 1.0,
+                    freshness=freshness_score,
+                    scarcity=scarcity_score,
+                )
+            )
+            classification = classify_opportunity(score_value)
+
         comparisons.append(
             PriceComparison(
                 master_product_id=master_id,
@@ -239,6 +320,15 @@ def analyze_cross_store_prices(
                 previous_winner_store_name=previous_winner_store_name,
                 winner_changed=winner_changed,
                 is_tie=is_tie,
+                history_min_90d=history_min_90d,
+                history_avg_90d=history_avg_90d,
+                history_median_90d=history_median_90d,
+                days_at_current_price=days_at_current_price,
+                opportunity_score=score_value,
+                opportunity_classification=classification,
+                history_position=history_position,
+                freshness_score=freshness_score,
+                scarcity_score=scarcity_score,
             )
         )
 
@@ -246,6 +336,7 @@ def analyze_cross_store_prices(
         sorted(
             (comparison for comparison in comparisons if not comparison.is_tie and comparison.saving_clp > 0),
             key=lambda comparison: (
+                -comparison.opportunity_score,
                 -comparison.saving_pct,
                 -comparison.saving_clp,
                 comparison.canonical_name.casefold(),

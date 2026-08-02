@@ -23,10 +23,20 @@ def _comparison_lines(position: int, comparison: PriceComparison) -> list[str]:
     lines.extend(
         [
             f"Ahorro: {clp(comparison.saving_clp)} ({comparison.saving_pct:.1%}) frente al segundo",
+            f"🔥 Opportunity Score: {comparison.opportunity_score:.0f}/100 · {comparison.opportunity_classification}",
             f"Confianza del match: {_confidence_text(comparison.confidence)}",
             f"Comprar más barato: {winner.url}",
         ]
     )
+    if comparison.history_avg_90d and winner.price > 0:
+        historical_delta = (winner.price - comparison.history_avg_90d) / comparison.history_avg_90d
+        lines.insert(
+            -1,
+            f"Frente al promedio 90 días: {historical_delta:+.1%} "
+            f"(promedio {clp(round(comparison.history_avg_90d))})",
+        )
+    if comparison.history_min_90d:
+        lines.insert(-1, f"Mínimo 90 días: {clp(comparison.history_min_90d)}")
     if len(comparison.offers) > 2:
         most_expensive = comparison.offers[-1]
         total_saving = most_expensive.price - winner.price
@@ -60,7 +70,7 @@ def build_comparison_summary_message(analysis: ComparisonAnalysis) -> str:
 def build_comparison_ranking_messages(
     analysis: ComparisonAnalysis,
     *,
-    limit: int = 20,
+    limit: int = 30,
 ) -> list[str]:
     selected = list(analysis.opportunities[: max(1, limit)])
     messages: list[str] = []

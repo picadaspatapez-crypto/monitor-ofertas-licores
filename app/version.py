@@ -1,3 +1,3 @@
-__version__ = "5.3.4"
+__version__ = "5.4.0"
 APP_VERSION = __version__
-RELEASE_NAME = "El Mundo Storefront API Hardening"
+RELEASE_NAME = "Catalog Intelligence & Reliability"

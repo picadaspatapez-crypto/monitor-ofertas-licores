@@ -1,3 +1,36 @@
+# v5.4.0 — Catalog Intelligence & Reliability
+
+- Corrige el borde del planificador con tolerancia configurable y estado `DUE_SOON`.
+- Muestra última revisión real, próxima revisión exacta y fuente en `/estado`.
+- Añade disponibilidad explícita y desactivación tras dos ausencias `HEALTHY`.
+- Registra reactivaciones y excluye publicaciones no disponibles del buscador, comparador y favoritos.
+- Calcula mínimos, promedios y medianas de 30/90 días, mínimo histórico y frecuencia de descuento.
+- Implementa Opportunity Score v1 con pesos 35/30/15/10/10.
+- Refuerza matching mediante EAN, SKU y reglas manuales persistentes de equivalencia/exclusión.
+- Amplía el comparador y buscador web a 30 resultados.
+- Añade `/mas`, `/historial`, `/oportunidades` y `/mejores` al bot.
+- Añade reporte semanal de salud y alertas de cercanía al timeout.
+- Incorpora la migración Alembic `0008_catalog_intelligence`.
+- Suite automatizada ampliada para disponibilidad, historial, score, matching y scheduler.
+
+# v5.3.4 — El Mundo Storefront API Hardening
+
+- Reemplaza `products.json` como fuente principal de El Mundo del Vino por la
+  Storefront GraphQL API oficial de Shopify.
+- Usa el dominio permanente `elmundodelvino-cl.myshopify.com`, paginación por
+  cursor y contexto de precios Chile.
+- Añade jitter inicial de 45–90 segundos para separar el request del arranque
+  paralelo de los demás collectors.
+- Limita la consulta a 75 productos y cinco variantes por página, dentro del
+  presupuesto de complejidad tokenless.
+- Maneja HTTP 429, GraphQL `THROTTLED`, HTTP 430 y 403 sin fan-out a otras rutas.
+- Respeta `Retry-After`; cuando no existe, espera 90 segundos y reintenta una sola vez.
+- Conserva un fallback legacy único y de bajo volumen solo para fallos no asociados
+  a bloqueo o rate limit.
+- Corrige importes GraphQL con decimales como `19990.0`.
+- Añade ocho regresiones específicas; suite total: 130 pruebas.
+- Sin migraciones nuevas ni variables obligatorias.
+
 # v5.3.3 — Socomep Replacement
 
 - Elimina La Barra del registry activo y de la planificación semanal.

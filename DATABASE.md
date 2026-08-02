@@ -904,3 +904,37 @@ los eventos detectados para un favorito durante una revisión.
 | `message` | Texto persistido para envío o reintento |
 | `current_price` | Mejor precio detectado |
 | `winner_store` | Tienda más barata actual |
+
+---
+
+# Estado implementado en v5.4
+
+## Campos nuevos de `products`
+
+| Campo | Uso |
+|---|---|
+| `sku` | Identificador público de la publicación cuando la tienda lo entrega |
+| `ean` | Código de barras usado como señal exacta de matching |
+| `is_available` | Disponibilidad confirmada por catálogos HEALTHY |
+| `missing_streak` | Cantidad de capturas HEALTHY consecutivas sin observar el producto |
+| `last_available_at` | Última confirmación de disponibilidad |
+| `unavailable_since` | Momento en que superó el umbral de ausencias |
+| `reactivated_at` | Última reposición detectada |
+| `last_confirmed_run_id` | Ejecución que confirmó la última presencia |
+
+## `matching_rules`
+
+Reglas manuales persistentes de tipo `equivalence` o `exclusion`. La pareja se
+guarda normalizada y ordenada para evitar duplicados lógicos.
+
+## `master_price_statistics`
+
+Una fila por producto maestro con agregados de 30/90 días, mínimo histórico,
+precio vigente más bajo, frecuencia de descuento y días al precio actual.
+
+## `opportunity_snapshots`
+
+Snapshot vigente del Opportunity Score, tienda/precio ganador, ahorro,
+confianza y componentes de historial, frescura y escasez.
+
+La migración responsable es `0008_catalog_intelligence`.

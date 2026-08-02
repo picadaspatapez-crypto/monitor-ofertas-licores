@@ -51,6 +51,14 @@ def parse_command(text: str | None) -> BotCommand:
         return BotCommand("search", query) if query else BotCommand("search_help")
     if command == "/estado":
         return BotCommand("status")
+    if command == "/mas":
+        return BotCommand("search_more")
+    if command == "/historial":
+        return BotCommand("history", query) if query else BotCommand("history_help")
+    if command == "/oportunidades":
+        return BotCommand("opportunities")
+    if command == "/mejores":
+        return BotCommand("best_prices")
     if command in {"/favorito", "/agregarfavorito"}:
         return BotCommand("favorite_add", query) if query else BotCommand("favorite_help")
     if command in {"/misfavoritos", "/favoritos"}:

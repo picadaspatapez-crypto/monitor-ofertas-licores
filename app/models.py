@@ -96,6 +96,16 @@ class Product(Base):
     current_price: Mapped[int] = mapped_column(Integer)
     regular_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
     discount_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    sku: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    ean: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    is_available: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    missing_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    unavailable_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_confirmed_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scrape_runs.id"), nullable=True, index=True
+    )
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )
@@ -227,6 +237,79 @@ class Alert(Base):
     product: Mapped[Product | None] = relationship(back_populates="alerts")
     store: Mapped[Store | None] = relationship(back_populates="alerts")
     scrape_run: Mapped[ScrapeRun | None] = relationship(back_populates="alerts")
+
+
+class MatchingRule(Base):
+    """Regla manual persistente para forzar o impedir equivalencias."""
+
+    __tablename__ = "matching_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "rule_type", "left_key", "right_key",
+            name="uq_matching_rule_pair",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_type: Mapped[str] = mapped_column(String(30), index=True)
+    left_key: Mapped[str] = mapped_column(String(500), index=True)
+    right_key: Mapped[str] = mapped_column(String(500), index=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class MasterPriceStatistic(Base):
+    __tablename__ = "master_price_statistics"
+
+    master_product_id: Mapped[int] = mapped_column(
+        ForeignKey("master_products.id"), primary_key=True
+    )
+    current_best_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_30d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_90d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    historical_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observations_30d: Mapped[int] = mapped_column(Integer, default=0)
+    observations_90d: Mapped[int] = mapped_column(Integer, default=0)
+    observations_total: Mapped[int] = mapped_column(Integer, default=0)
+    discount_frequency_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    days_at_current_price: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class OpportunitySnapshot(Base):
+    __tablename__ = "opportunity_snapshots"
+
+    master_product_id: Mapped[int] = mapped_column(
+        ForeignKey("master_products.id"), primary_key=True
+    )
+    score: Mapped[float] = mapped_column(Float, index=True)
+    classification: Mapped[str] = mapped_column(String(30), index=True)
+    winner_product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.id"), nullable=True, index=True
+    )
+    winner_store_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stores.id"), nullable=True, index=True
+    )
+    winner_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    saving_clp: Mapped[int] = mapped_column(Integer, default=0)
+    saving_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    match_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    history_position: Mapped[float] = mapped_column(Float, default=0.0)
+    freshness_score: Mapped[float] = mapped_column(Float, default=0.0)
+    scarcity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
 
 class TelegramBotState(Base):

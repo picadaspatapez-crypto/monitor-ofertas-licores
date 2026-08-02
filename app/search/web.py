@@ -85,6 +85,23 @@ def _result_html(result: SearchResult) -> str:
     if result.package_quantity > 1:
         meta.append(f"<span>Pack {result.package_quantity}</span>")
 
+    intelligence = ""
+    intelligence_parts: list[str] = []
+    if result.opportunity_score is not None:
+        intelligence_parts.append(
+            f"Opportunity Score <strong>{result.opportunity_score:.0f}/100</strong> "
+            f"· {html.escape(result.opportunity_classification or '')}"
+        )
+    if result.avg_90d:
+        delta = (result.winner.price - result.avg_90d) / result.avg_90d
+        intelligence_parts.append(
+            f"Promedio 90 días {format_clp(round(result.avg_90d))} · actual {delta:+.1%}"
+        )
+    if result.min_90d:
+        intelligence_parts.append(f"Mínimo 90 días {format_clp(result.min_90d)}")
+    if intelligence_parts:
+        intelligence = '<div class="saving">' + " · ".join(intelligence_parts) + "</div>"
+
     saving = ""
     if result.runner_up and result.saving_clp > 0:
         saving = (
@@ -118,7 +135,7 @@ def _result_html(result: SearchResult) -> str:
 <div class="meta">{''.join(meta)}</div></div>
 <div class="winner"><span>Mejor precio</span><strong>{format_clp(result.winner.price)}</strong>
 <small>{html.escape(result.winner.store_name)}</small></div></div>
-{saving}<div class="offers">{''.join(offers)}</div></article>"""
+{saving}{intelligence}<div class="offers">{''.join(offers)}</div></article>"""
 
 
 def _search_html(
@@ -153,7 +170,7 @@ class SearchApplication:
         if not database_url:
             raise RuntimeError("Falta la variable obligatoria: DATABASE_URL")
         self.access_token = os.getenv("SEARCH_ACCESS_TOKEN", "").strip()
-        self.result_limit = _positive_int("SEARCH_RESULT_LIMIT", 8, maximum=20)
+        self.result_limit = _positive_int("SEARCH_RESULT_LIMIT", 8, maximum=30)
         self.max_age_hours = _positive_int("SEARCH_MAX_AGE_HOURS", 72, maximum=24 * 30)
         self.engine, self.SessionLocal = create_database(database_url)
 
@@ -171,18 +188,21 @@ class SearchApplication:
         header_token = bearer[7:].strip() if bearer.startswith("Bearer ") else None
         return self.token_matches(cookie_token.value if cookie_token else None) or self.token_matches(header_token)
 
-    def search(self, query: str, *, limit: int | None = None) -> list[SearchResult]:
+    def search(
+        self, query: str, *, limit: int | None = None, offset: int = 0
+    ) -> list[SearchResult]:
         with self.SessionLocal() as session:
             return search_products(
                 session,
                 query,
                 limit=limit or self.result_limit,
+                offset=offset,
                 max_age_hours=self.max_age_hours,
             )
 
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/5.0"
+    server_version = "LiquorSearch/5.4"
 
     @property
     def app(self) -> SearchApplication:

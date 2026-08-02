@@ -276,6 +276,7 @@ def _parse_store_api_products(payload: Any) -> dict[str, CollectedProduct]:
             current_price=current,
             regular_price=regular,
             discount_pct=_discount(regular, current),
+            sku=(_normalize_text(str(item.get("sku") or ""))[:120] or None),
             source_sections=categories or ("Catálogo general",),
         )
     return products

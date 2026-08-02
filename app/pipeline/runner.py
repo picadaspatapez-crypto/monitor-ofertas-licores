@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from app.analyzers import analyze_catalog, analyze_cross_store_prices
 from app.collectors.base import Collector, CollectorPausedError
@@ -14,6 +15,11 @@ from app.config import Settings
 from app.database import Base, create_database
 from app.deadlines import collector_budget
 from app.favorites import deliver_pending_favorite_alerts, evaluate_favorite_alerts
+from app.intelligence import (
+    persist_opportunity_snapshots,
+    reconcile_store_availability,
+    refresh_price_statistics,
+)
 from app.models import ScrapeRun, Store
 from app.notifications import (
     ComparisonAlertContext,
@@ -41,6 +47,7 @@ from app.services import (
     send_message,
 )
 from app.reports.global_summary import build_global_run_summary
+from app.reports.health import build_weekly_health_report
 from app.search.catalog import refresh_search_catalog
 from app.version import RELEASE_NAME, __version__
 from sqlalchemy import select
@@ -63,6 +70,11 @@ class CollectorExecution:
     sections_failed: int = 0
     execution_state: str = "UPDATED"
     detail: str | None = None
+    last_real_run_at: datetime | None = None
+    next_due_at: datetime | None = None
+    source: str | None = None
+    marked_unavailable: int = 0
+    reactivated: int = 0
 
 
 
@@ -74,6 +86,7 @@ class RunSnapshot:
     products_found: int
     health_status: str
     finished_at: datetime
+    source: str | None = None
 
 
 def _latest_finished_run(session, store_id: int, *, exclude_run_id: int | None = None):
@@ -114,14 +127,18 @@ def _latest_healthy_snapshot(
         products_found=int(run.products_found or 0),
         health_status=str(run.health_status or "HEALTHY"),
         finished_at=finished_at,
+        source=(run.metrics_json or {}).get("discovery_source") if isinstance(run.metrics_json, dict) else None,
     )
 
 
-def _hours_until_due(last_finished_at: datetime, interval_hours: int) -> float:
-    if last_finished_at.tzinfo is None:
-        last_finished_at = last_finished_at.replace(tzinfo=timezone.utc)
-    due_at = last_finished_at + timedelta(hours=interval_hours)
-    return max(0.0, (due_at - datetime.now(timezone.utc)).total_seconds() / 3600)
+def _format_schedule_time(value: datetime, timezone_name: str) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    try:
+        local = value.astimezone(ZoneInfo(timezone_name))
+    except Exception:
+        local = value.astimezone(timezone.utc)
+    return local.strftime("%d-%m-%Y %H:%M:%S %Z")
 
 
 def _scheduled_execution_or_none(
@@ -148,15 +165,21 @@ def _scheduled_execution_or_none(
     last_finished = latest.finished_at
     if last_finished.tzinfo is None:
         last_finished = last_finished.replace(tzinfo=timezone.utc)
-    elapsed = datetime.now(timezone.utc) - last_finished
-    if elapsed >= timedelta(hours=interval_hours):
+    due_at = last_finished + timedelta(hours=interval_hours)
+    now = datetime.now(timezone.utc)
+    grace = timedelta(minutes=performance.scheduler_grace_minutes)
+
+    # La tolerancia evita perder una revisión completa porque Railway inició el
+    # cron algunos segundos antes de la hora exacta.
+    if now + grace >= due_at:
+        return None
+    if snapshot is None:
         return None
 
-    remaining = _hours_until_due(last_finished, interval_hours)
-    if snapshot is None:
-        # Sin un snapshot confiable, se vuelve a intentar aunque el intervalo
-        # todavía no haya vencido para no dejar la tienda vacía indefinidamente.
-        return None
+    remaining_seconds = max(0, int((due_at - now).total_seconds()))
+    hours, remainder = divmod(remaining_seconds, 3600)
+    minutes = remainder // 60
+    remaining_text = f"{hours} h {minutes} min" if hours else f"{minutes} min"
     return CollectorExecution(
         key=collector.key,
         store_name=collector.store_name,
@@ -165,12 +188,16 @@ def _scheduled_execution_or_none(
         products_found=snapshot.products_found,
         store_id=snapshot.store_id,
         run_id=snapshot.run_id,
-        health_status="STALE",
-        execution_state="STALE",
+        health_status=snapshot.health_status,
+        execution_state="DUE_SOON",
         detail=(
-            f"Se reutiliza el último catálogo confiable; próxima revisión en "
-            f"aproximadamente {remaining:.1f} h."
+            f"Catálogo vigente reutilizado; faltan {remaining_text}. "
+            f"Próxima revisión real: "
+            f"{_format_schedule_time(due_at, performance.app_timezone)}."
         ),
+        last_real_run_at=snapshot.finished_at,
+        next_due_at=due_at,
+        source=snapshot.source,
     )
 
 
@@ -551,7 +578,14 @@ def _run_collector(
                 price_changes += int(result.price_changed)
 
             session.flush()
-            missing_products = count_missing_products(session, store, run)
+            availability = reconcile_store_availability(
+                session,
+                store=store,
+                scrape_run=run,
+                catalog_is_healthy=final_stats.health_status == "HEALTHY",
+                missing_threshold=settings.availability_missing_threshold,
+            )
+            missing_products = availability.missing
             persistence_ms = int((time.monotonic() - persistence_started) * 1000)
             performance_ms = dict(final_stats.performance_ms)
             performance_ms["collect"] = collect_ms
@@ -621,6 +655,10 @@ def _run_collector(
             price_drops=analysis.price_drops,
             price_increases=analysis.price_increases,
             sections_failed=final_stats.sections_failed,
+            last_real_run_at=run.finished_at,
+            source=final_stats.discovery_source,
+            marked_unavailable=availability.marked_unavailable,
+            reactivated=availability.reactivated,
         )
 
     except CollectorPausedError as exc:
@@ -755,10 +793,14 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
                 minimum_confidence=settings.cross_store_match_min_confidence,
             )
             session.flush()
+            historical = refresh_price_statistics(session)
             comparison = analyze_cross_store_prices(
                 session,
                 run_ids=run_ids,
                 minimum_confidence=settings.cross_store_match_min_confidence,
+            )
+            opportunity_rows = persist_opportunity_snapshots(
+                session, comparison.opportunities
             )
             session.commit()
 
@@ -776,7 +818,9 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Productos reagrupados.....: {matching.products_relinked}", flush=True)
         print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
         print(f"Equivalencias verificadas.: {comparison.verified_matches}", flush=True)
+        print(f"Estadísticas históricas...: {historical.rows_updated}", flush=True)
         print(f"Oportunidades de precio...: {len(comparison.opportunities)}", flush=True)
+        print(f"Opportunity Scores guardados: {opportunity_rows}", flush=True)
         print(f"Cambios de ganador........: {len(comparison.winner_changes)}", flush=True)
         print(f"Empates...................: {comparison.ties}", flush=True)
         print(f"Grupos no verificados.....: {comparison.unverified_groups}", flush=True)
@@ -861,7 +905,7 @@ def _run_favorite_alert_stage(
         and result.products_found > 0
         and (
             (result.execution_state == "UPDATED" and result.health_status == "HEALTHY")
-            or result.execution_state == "STALE"
+            or result.execution_state in {"STALE", "DUE_SOON"}
         )
         for result in relevant
     )
@@ -958,11 +1002,65 @@ def _send_global_run_summary(
 
 
 
+def _run_weekly_health_stage(
+    *,
+    SessionLocal,
+    settings: Settings,
+    timeout_minutes: int,
+) -> None:
+    if not settings.weekly_health_report:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        with SessionLocal() as session:
+            last = latest_sent_alert(
+                session, store_id=None, alert_type="weekly_health_report"
+            )
+            if last is not None and last.sent_at is not None:
+                sent_at = last.sent_at
+                if sent_at.tzinfo is None:
+                    sent_at = sent_at.replace(tzinfo=timezone.utc)
+                if now - sent_at < timedelta(hours=settings.weekly_health_interval_hours):
+                    print("Reporte semanal de salud: todavía no corresponde.", flush=True)
+                    return
+            message = build_weekly_health_report(
+                session, days=7, timeout_minutes=timeout_minutes
+            )
+        payload_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
+        week_token = now.strftime("%G-W%V")
+        bundle = NotificationBundle(
+            store_id=None,
+            run_id=None,
+            alert_type="weekly_health_report",
+            deduplication_key=f"weekly-health:{week_token}:{payload_hash[:12]}",
+            payload_hash=payload_hash,
+            reason="reporte semanal de salud de collectors",
+            messages=(message,),
+        )
+        sent, skipped, failed = deliver_notification_bundles(
+            SessionLocal=SessionLocal,
+            bundles=[bundle],
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+            send_message_fn=send_message,
+        )
+        print(
+            f"Reporte semanal de salud: enviados={sent}, omitidos={skipped}, fallidos={failed}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"⚠ No se pudo generar el reporte semanal: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _pipeline_exit_code(results: list[CollectorExecution]) -> int:
     """Una ejecución es operativa si existe al menos un catálogo actualizado o vigente."""
 
     return 0 if any(
-        result.execution_state in {"UPDATED", "STALE"} and result.success
+        result.execution_state in {"UPDATED", "STALE", "DUE_SOON"} and result.success
         for result in results
     ) else 1
 
@@ -1020,7 +1118,8 @@ def run_pipeline() -> int:
     )
     print(
         "Resiliencia de tiendas: "
-        f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h; "
+        f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h "
+        f"(tolerancia {performance.scheduler_grace_minutes} min); "
         "La Barra deshabilitada; Socomep activo cada 6 h.",
         flush=True,
     )
@@ -1037,10 +1136,15 @@ def run_pipeline() -> int:
             due_collectors.append(collector)
             continue
         results.append(scheduled)
-        if scheduled.execution_state == "STALE":
+        if scheduled.execution_state == "DUE_SOON":
             print(
-                f"🟠 {collector.store_name}: no corresponde revisión en este ciclo; "
+                f"🕒 {collector.store_name}: revisión programada aún no vencida; "
                 f"{scheduled.detail}",
+                flush=True,
+            )
+        elif scheduled.execution_state == "STALE":
+            print(
+                f"🟠 {collector.store_name}: {scheduled.detail}",
                 flush=True,
             )
         elif scheduled.execution_state == "PAUSED":
@@ -1103,12 +1207,18 @@ def run_pipeline() -> int:
         settings=settings,
         results=results,
     )
+    _run_weekly_health_stage(
+        SessionLocal=SessionLocal,
+        settings=settings,
+        timeout_minutes=performance.collector_timeout_minutes,
+    )
 
     total_collectors = len(collectors)
     updated_count = sum(
         result.execution_state == "UPDATED" and result.success for result in results
     )
     stale_count = sum(result.execution_state == "STALE" for result in results)
+    due_soon_count = sum(result.execution_state == "DUE_SOON" for result in results)
     paused_count = sum(result.execution_state == "PAUSED" for result in results)
     failed_count = sum(result.execution_state == "FAILED" for result in results)
     wall_ms = int((time.monotonic() - pipeline_started) * 1000)
@@ -1120,6 +1230,7 @@ def run_pipeline() -> int:
     print(f"Collectors registrados...: {total_collectors}", flush=True)
     print(f"Actualizados...............: {updated_count}", flush=True)
     print(f"Snapshots STALE...........: {stale_count}", flush=True)
+    print(f"Programados DUE SOON......: {due_soon_count}", flush=True)
     print(f"Collectors pausados.......: {paused_count}", flush=True)
     print(f"Collectors fallidos.......: {failed_count}", flush=True)
     print(f"Duración de pared.........: {wall_ms / 1000:.1f} s", flush=True)
@@ -1128,6 +1239,7 @@ def run_pipeline() -> int:
     labels = {
         "UPDATED": "OK",
         "STALE": "STALE",
+        "DUE_SOON": "DUE",
         "PAUSED": "PAUSE",
         "FAILED": "ERROR",
     }

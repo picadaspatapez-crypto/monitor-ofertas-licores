@@ -54,6 +54,7 @@ def comparison_fingerprint(
             "runner_up_price": item.runner_up.price if item.runner_up else None,
             "saving_clp": item.saving_clp,
             "confidence": round(item.confidence, 4),
+            "opportunity_score": round(item.opportunity_score, 1),
         }
         for item in analysis.opportunities[: max(1, limit)]
     ]
