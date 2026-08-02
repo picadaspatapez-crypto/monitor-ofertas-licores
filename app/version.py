@@ -1,3 +1,3 @@
-__version__ = "5.3.3"
+__version__ = "5.3.4"
 APP_VERSION = __version__
-RELEASE_NAME = "Socomep Replacement: La Barra Disabled"
+RELEASE_NAME = "El Mundo Storefront API Hardening"
