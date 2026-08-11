@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.domain import CollectedProduct, SavedProduct
 from app.matching import normalize_product_name
-from app.models import MasterProduct, PriceObservation, Product, ProductMatch, ScrapeRun, Store
+from app.models import (MasterProduct, PriceObservation, PriceQuoteObservation, Product, ProductMatch, ProductPriceQuote, ScrapeRun, Store)
 from app.repositories.common import utcnow
 
 
@@ -126,6 +126,55 @@ def _link_master_product(session: Session, product: Product, master: MasterProdu
         match.matching_method = "exact_normalized"
 
 
+
+def _persist_price_quotes(session: Session, item: CollectedProduct, product: Product, scrape_run: ScrapeRun) -> None:
+    quotes = item.price_quotes
+    if not quotes:
+        from app.domain import CollectedPriceQuote
+        quotes = (CollectedPriceQuote(
+            price=item.current_price, regular_price=item.regular_price,
+            price_type="PUBLIC", audience_key="public", eligibility_required=False,
+        ),)
+
+    active_contexts: set[tuple[str, str]] = set()
+    now = utcnow()
+    for quote in quotes:
+        if int(quote.price) <= 0:
+            continue
+        price_type = (quote.price_type or "PUBLIC").strip().upper()[:30]
+        audience_key = (quote.audience_key or "public").strip().casefold()[:80]
+        key = (price_type, audience_key)
+        active_contexts.add(key)
+        row = session.scalar(
+            select(ProductPriceQuote).where(
+                ProductPriceQuote.product_id == product.id,
+                ProductPriceQuote.price_type == price_type,
+                ProductPriceQuote.audience_key == audience_key,
+            )
+        )
+        if row is None:
+            row = ProductPriceQuote(
+                product_id=product.id, price_type=price_type, audience_key=audience_key
+            )
+            session.add(row)
+        row.price = int(quote.price)
+        row.regular_price = quote.regular_price
+        row.eligibility_required = bool(quote.eligibility_required)
+        row.is_active = True
+        row.observed_at = now
+        session.add(PriceQuoteObservation(
+            product_id=product.id, scrape_run_id=scrape_run.id,
+            price=int(quote.price), regular_price=quote.regular_price,
+            price_type=price_type, audience_key=audience_key,
+            eligibility_required=bool(quote.eligibility_required), observed_at=now,
+        ))
+
+    if active_contexts:
+        for row in session.scalars(select(ProductPriceQuote).where(ProductPriceQuote.product_id == product.id)):
+            if (row.price_type, row.audience_key) not in active_contexts:
+                row.is_active = False
+
+
 def save_product(
     session: Session,
     item: CollectedProduct,
@@ -170,6 +219,7 @@ def save_product(
     if item.ean and not master.ean:
         master.ean = item.ean
     _link_master_product(session, product, master)
+    _persist_price_quotes(session, item, product, scrape_run)
     session.add(
         PriceObservation(
             product=product,

@@ -7,6 +7,15 @@ from app.models import Product
 
 
 @dataclass(frozen=True)
+class CollectedPriceQuote:
+    price: int
+    price_type: str = "PUBLIC"
+    regular_price: int | None = None
+    audience_key: str = "public"
+    eligibility_required: bool = False
+
+
+@dataclass(frozen=True)
 class CollectedProduct:
     store: str
     name: str
@@ -17,6 +26,7 @@ class CollectedProduct:
     source_sections: tuple[str, ...] = ()
     sku: str | None = None
     ean: str | None = None
+    price_quotes: tuple[CollectedPriceQuote, ...] = ()
 
 
 @dataclass(frozen=True)

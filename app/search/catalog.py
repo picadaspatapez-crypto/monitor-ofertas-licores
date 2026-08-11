@@ -46,7 +46,7 @@ def refresh_search_catalog(session: Session) -> CatalogRefreshSummary:
         products: list[Product] = [
             product
             for product in master.store_products
-            if (product.store_record is None or product.store_record.is_active)
+            if (product.store_record is None or (product.store_record.is_active and product.store_record.comparison_enabled))
             and product.is_available
         ]
         source_names = [product.name for product in products]

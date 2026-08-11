@@ -1,0 +1,20 @@
+v5.5.0 — Validation results
+===========================
+
+Base: v5.4.0 Catalog Intelligence & Reliability
+Date: 2026-08-11
+
+- pytest: 147 passed
+- Python compileall (app + tests): OK
+- Alembic head: 0009_price_contexts
+- Registry: 9 collectors (8 public/operational including La Vinoteca; CAV diagnostic)
+- La Vinoteca parser: VTEX SKU/EAN/price/list-price tests OK
+- CAV parser: Normal/Oferta/Socio context separation tests OK
+- Context quote persistence: OK
+- Personal preview isolation: OK
+- Public search/history isolation from diagnostic sources: existing regression suite OK
+
+Note: this execution environment has no outbound DNS, so live HTTP requests to
+La Vinoteca/CAV could not be executed from the local test runner. Collectors are
+implemented against the public structures researched on 2026-08-11 and defend
+against structural drift by refusing BROKEN captures instead of persisting them.

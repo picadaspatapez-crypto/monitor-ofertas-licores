@@ -1,4 +1,5 @@
 from app.domain.products import (
+    CollectedPriceQuote,
     CollectedProduct,
     CollectionBatch,
     CollectionStats,
@@ -7,6 +8,7 @@ from app.domain.products import (
 )
 
 __all__ = [
+    "CollectedPriceQuote",
     "CollectedProduct",
     "CollectionBatch",
     "CollectionStats",

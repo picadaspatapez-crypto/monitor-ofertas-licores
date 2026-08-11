@@ -27,6 +27,8 @@ class StoreMetadata:
     requires_browser: bool
     country_code: str = "CL"
     currency_code: str = "CLP"
+    comparison_enabled: bool = True
+    diagnostic_mode: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip():

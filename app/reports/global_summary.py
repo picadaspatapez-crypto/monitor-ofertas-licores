@@ -21,6 +21,7 @@ class ExecutionView(Protocol):
     source: str | None
     marked_unavailable: int
     reactivated: int
+    diagnostic_mode: bool
 
 
 def _duration(milliseconds: int) -> str:
@@ -37,13 +38,16 @@ def build_global_run_summary(
     wall_duration_ms: int,
 ) -> str:
     ordered = sorted(executions, key=lambda item: item.store_name.casefold())
-    updated = sum(item.execution_state == "UPDATED" and item.success for item in ordered)
-    stale = sum(item.execution_state == "STALE" and item.success for item in ordered)
-    due_soon = sum(item.execution_state == "DUE_SOON" and item.success for item in ordered)
-    paused = sum(item.execution_state == "PAUSED" for item in ordered)
+    public = [item for item in ordered if not getattr(item, "diagnostic_mode", False)]
+    diagnostic = [item for item in ordered if getattr(item, "diagnostic_mode", False)]
+    updated = sum(item.execution_state == "UPDATED" and item.success for item in public)
+    stale = sum(item.execution_state == "STALE" and item.success for item in public)
+    due_soon = sum(item.execution_state == "DUE_SOON" and item.success for item in public)
+    paused = sum(item.execution_state == "PAUSED" for item in public)
     failed = sum(item.execution_state == "FAILED" or (
         not item.success and item.execution_state not in {"PAUSED"}
-    ) for item in ordered)
+    ) for item in public)
+    diagnostic_ok = sum(item.success for item in diagnostic)
     lines = [
         "📊 Revisión multi-tienda completada",
         "",
@@ -52,6 +56,7 @@ def build_global_run_summary(
         f"Revisiones programadas pendientes: {due_soon}",
         f"Tiendas pausadas: {paused}",
         f"Tiendas fallidas: {failed}",
+        f"Collectors diagnóstico OK: {diagnostic_ok}/{len(diagnostic)}" if diagnostic else "Collectors diagnóstico: 0",
         f"Duración collectors: {_duration(wall_duration_ms)}",
         "",
     ]
@@ -87,9 +92,10 @@ def build_global_run_summary(
         elif item.success:
             health = item.health_status or "UNKNOWN"
             icon = icons.get(health, "⚪")
-            lines.append(f"{icon} {item.store_name}")
+            prefix = "🧪" if getattr(item, "diagnostic_mode", False) else icon
+            lines.append(f"{prefix} {item.store_name}")
             lines.append(
-                f"   {item.products_found} productos · {health} · {_duration(item.duration_ms)}"
+                f"   {item.products_found} productos · {health}{' · DIAGNÓSTICO' if getattr(item, 'diagnostic_mode', False) else ''} · {_duration(item.duration_ms)}"
             )
             changes = []
             if item.price_drops:
@@ -108,8 +114,12 @@ def build_global_run_summary(
             if item.source:
                 lines.append(f"   Fuente: {item.source}")
         else:
-            lines.append(f"🔴 {item.store_name}")
-            lines.append("   Collector fallido")
+            if getattr(item, "diagnostic_mode", False):
+                lines.append(f"🧪 {item.store_name}")
+                lines.append("   Diagnóstico fallido; no afecta comparador ni alertas públicas")
+            else:
+                lines.append(f"🔴 {item.store_name}")
+                lines.append("   Collector fallido")
             if item.error_message:
                 lines.append(f"   {item.error_message[:160]}")
         lines.append("")

@@ -95,6 +95,10 @@ def analyze_cross_store_prices(
     minimum_confidence: float = 0.86,
 ) -> ComparisonAnalysis:
     products = products_observed_in_runs(session, run_ids)
+    comparison_store_ids = set(session.scalars(
+        select(Store.id).where(Store.is_active.is_(True), Store.comparison_enabled.is_(True))
+    ))
+    products = [product for product in products if product.store_id in comparison_store_ids]
     if not products:
         return ComparisonAnalysis(0, 0, 0, (), (), 0, 0)
 

@@ -19,6 +19,7 @@ from app.intelligence import (
     persist_opportunity_snapshots,
     reconcile_store_availability,
     refresh_price_statistics,
+    refresh_personal_opportunities,
 )
 from app.models import ScrapeRun, Store
 from app.notifications import (
@@ -75,6 +76,7 @@ class CollectorExecution:
     source: str | None = None
     marked_unavailable: int = 0
     reactivated: int = 0
+    diagnostic_mode: bool = False
 
 
 
@@ -658,6 +660,7 @@ def _run_collector(
             last_real_run_at=run.finished_at,
             source=final_stats.discovery_source,
             marked_unavailable=availability.marked_unavailable,
+            diagnostic_mode=collector.metadata.diagnostic_mode,
             reactivated=availability.reactivated,
         )
 
@@ -764,6 +767,7 @@ def _run_collector(
             run_id=run_id,
             sections_failed=1,
             execution_state="FAILED",
+            diagnostic_mode=collector.metadata.diagnostic_mode,
         )
 
 
@@ -802,6 +806,7 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             opportunity_rows = persist_opportunity_snapshots(
                 session, comparison.opportunities
             )
+            personal_rows = refresh_personal_opportunities(session)
             session.commit()
 
         print("=" * 64, flush=True)
@@ -821,6 +826,7 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Estadísticas históricas...: {historical.rows_updated}", flush=True)
         print(f"Oportunidades de precio...: {len(comparison.opportunities)}", flush=True)
         print(f"Opportunity Scores guardados: {opportunity_rows}", flush=True)
+        print(f"Opportunity Scores personales (preview): {personal_rows}", flush=True)
         print(f"Cambios de ganador........: {len(comparison.winner_changes)}", flush=True)
         print(f"Empates...................: {comparison.ties}", flush=True)
         print(f"Grupos no verificados.....: {comparison.unverified_groups}", flush=True)
@@ -899,7 +905,7 @@ def _run_favorite_alert_stage(
     settings: Settings,
     results: list[CollectorExecution],
 ) -> None:
-    relevant = [result for result in results if result.execution_state != "PAUSED"]
+    relevant = [result for result in results if result.execution_state != "PAUSED" and not result.diagnostic_mode]
     complete = bool(relevant) and all(
         result.run_id is not None
         and result.products_found > 0
@@ -1060,7 +1066,9 @@ def _pipeline_exit_code(results: list[CollectorExecution]) -> int:
     """Una ejecución es operativa si existe al menos un catálogo actualizado o vigente."""
 
     return 0 if any(
-        result.execution_state in {"UPDATED", "STALE", "DUE_SOON"} and result.success
+        result.execution_state in {"UPDATED", "STALE", "DUE_SOON"}
+        and result.success
+        and not result.diagnostic_mode
         for result in results
     ) else 1
 
@@ -1120,7 +1128,7 @@ def run_pipeline() -> int:
         "Resiliencia de tiendas: "
         f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h "
         f"(tolerancia {performance.scheduler_grace_minutes} min); "
-        "La Barra deshabilitada; Socomep activo cada 6 h.",
+        "La Barra deshabilitada; La Vinoteca activa; CAV en diagnóstico sin afectar comparador público.",
         flush=True,
     )
 

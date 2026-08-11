@@ -14,6 +14,7 @@ from app.favorites import (
     resolve_favorite_query,
 )
 from app.intelligence.queries import top_opportunities
+from app.intelligence.personal import top_personal_opportunities
 from app.models import MasterProduct, Product, ScrapeRun, Store, TelegramFavorite
 from app.search.web import SearchApplication
 from app.telegram_bot.api import TelegramAPI, TelegramAPIError
@@ -262,6 +263,29 @@ class TelegramSearchBot:
             self._send(
                 chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup
             )
+            return
+        if command.name == "personal_opportunities":
+            try:
+                with self.application.SessionLocal() as session:
+                    views = top_personal_opportunities(session, limit=20)
+                if not views:
+                    text = "🧪 Vista personal: todavía no hay suficientes coincidencias contextuales."
+                else:
+                    lines = ["🧪 Vista personal · preview", "", "Incluye precios de socio CAV sin modificar el comparador público.", ""]
+                    for index, view in enumerate(views, start=1):
+                        context = "socio" if view.price_type == "MEMBER" else view.price_type.casefold()
+                        lines.extend([
+                            f"{index}. {view.canonical_name}",
+                            f"   {view.winner_store}: ${view.winner_price:,} ({context})".replace(",", "."),
+                            f"   Ahorro: ${view.saving_clp:,} · {view.saving_pct:.1%} · score {view.score:.0f}".replace(",", "."),
+                            view.url,
+                            "",
+                        ])
+                    text = "\n".join(lines).strip()
+            except Exception as exc:
+                print(f"BOT personal opportunities error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar la vista personal en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
         if command.name == "favorite_help":
             self._send(

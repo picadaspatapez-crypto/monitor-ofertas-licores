@@ -14,6 +14,8 @@ def get_or_create_store(
     requires_browser: bool,
     country_code: str = "CL",
     currency_code: str = "CLP",
+    comparison_enabled: bool = True,
+    diagnostic_mode: bool = False,
 ) -> Store:
     """Crea la tienda o sincroniza sus metadatos declarativos."""
     store = session.scalar(select(Store).where(Store.slug == slug))
@@ -28,6 +30,8 @@ def get_or_create_store(
     store.requires_browser = requires_browser
     store.country_code = country_code
     store.currency_code = currency_code
+    store.comparison_enabled = comparison_enabled
+    store.diagnostic_mode = diagnostic_mode
     session.flush()
     return store
 

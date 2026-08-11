@@ -35,6 +35,8 @@ class Store(Base):
     requires_browser: Mapped[bool] = mapped_column(Boolean, default=False)
     country_code: Mapped[str] = mapped_column(String(2), default="CL")
     currency_code: Mapped[str] = mapped_column(String(3), default="CLP")
+    comparison_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    diagnostic_mode: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -237,6 +239,69 @@ class Alert(Base):
     product: Mapped[Product | None] = relationship(back_populates="alerts")
     store: Mapped[Store | None] = relationship(back_populates="alerts")
     scrape_run: Mapped[ScrapeRun | None] = relationship(back_populates="alerts")
+
+
+class ProductPriceQuote(Base):
+    """Precio vigente de una publicación para un contexto/audiencia concreta."""
+
+    __tablename__ = "product_price_quotes"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "price_type", "audience_key",
+            name="uq_product_price_quote_context",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    price: Mapped[int] = mapped_column(Integer)
+    regular_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_type: Mapped[str] = mapped_column(String(30), default="PUBLIC", index=True)
+    audience_key: Mapped[str] = mapped_column(String(80), default="public", index=True)
+    eligibility_required: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class PriceQuoteObservation(Base):
+    """Historial inmutable de precios contextuales (público, socio, tarjeta, cupón)."""
+
+    __tablename__ = "price_quote_observations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    scrape_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scrape_runs.id"), nullable=True, index=True
+    )
+    price: Mapped[int] = mapped_column(Integer)
+    regular_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_type: Mapped[str] = mapped_column(String(30), default="PUBLIC", index=True)
+    audience_key: Mapped[str] = mapped_column(String(80), default="public", index=True)
+    eligibility_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class PersonalOpportunitySnapshot(Base):
+    """Opportunity Score usando precios habilitados para el perfil personal."""
+
+    __tablename__ = "personal_opportunity_snapshots"
+
+    master_product_id: Mapped[int] = mapped_column(
+        ForeignKey("master_products.id"), primary_key=True
+    )
+    score: Mapped[float] = mapped_column(Float, index=True)
+    classification: Mapped[str] = mapped_column(String(30), index=True)
+    winner_product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), nullable=True, index=True)
+    winner_store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"), nullable=True, index=True)
+    winner_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    winner_price_type: Mapped[str] = mapped_column(String(30), default="PUBLIC")
+    winner_audience_key: Mapped[str] = mapped_column(String(80), default="public")
+    saving_clp: Mapped[int] = mapped_column(Integer, default=0)
+    saving_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class MatchingRule(Base):

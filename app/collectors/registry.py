@@ -10,6 +10,8 @@ from app.collectors.dondelanegra import DondeLaNegraCollector
 from app.collectors.lamodelo import LaModeloCollector
 from app.collectors.socomep import SocomepCollector
 from app.collectors.liquidos import LiquidosCollector
+from app.collectors.lavinoteca import LaVinotecaCollector
+from app.collectors.cav import CAVCollector
 
 CollectorFactory = Callable[[], Collector]
 
@@ -24,6 +26,8 @@ COLLECTOR_FACTORIES: tuple[CollectorFactory, ...] = (
     DondeLaNegraCollector,
     LaModeloCollector,
     SocomepCollector,
+    LaVinotecaCollector,
+    CAVCollector,
 )
 
 

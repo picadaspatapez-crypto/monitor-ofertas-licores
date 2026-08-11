@@ -42,6 +42,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
         .where(
             Product.master_product_id.is_not(None),
             Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
             PriceObservation.observed_at >= cutoff,
             PriceObservation.price > 0,
         )
@@ -73,6 +74,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
             .where(
                 Product.master_product_id.in_(result),
                 Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
                 PriceObservation.observed_at >= cutoff,
                 PriceObservation.price > 0,
             )
@@ -98,6 +100,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .where(
                 Product.master_product_id.is_not(None),
                 Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
                 PriceObservation.price > 0,
             )
             .group_by(Product.master_product_id)
@@ -112,6 +115,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .where(
                 Product.master_product_id.is_not(None),
                 Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
                 PriceObservation.price > 0,
             )
             .group_by(Product.master_product_id)
@@ -127,6 +131,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.is_available.is_(True),
                 Product.current_price > 0,
                 Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
             )
             .group_by(Product.master_product_id)
         )
@@ -141,6 +146,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.master_product_id.is_not(None),
                 Product.is_available.is_(True),
                 Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
                 PriceObservation.price == Product.current_price,
                 PriceObservation.observed_at >= now - timedelta(days=90),
             )

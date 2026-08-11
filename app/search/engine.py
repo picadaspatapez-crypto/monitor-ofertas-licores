@@ -117,7 +117,7 @@ def _fresh_products(
 ) -> list[Product]:
     result: list[Product] = []
     for product in products:
-        if product.store_record is not None and not product.store_record.is_active:
+        if product.store_record is not None and (not product.store_record.is_active or not getattr(product.store_record, "comparison_enabled", True)):
             continue
         if not bool(getattr(product, "is_available", True)):
             continue

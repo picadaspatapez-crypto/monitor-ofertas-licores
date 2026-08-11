@@ -248,3 +248,11 @@ v5.1.8 — Trusted Partial Catalog Persistence
 - La Barra queda `PAUSED` y realiza un preflight HTTP semanal de bajo costo.
 - Estados `UPDATED`, `STALE`, `PAUSED` y `FAILED` en el resumen global.
 - Matching y favoritos pueden usar snapshots vigentes; una tienda pausada no bloquea el resto.
+
+## 5.5.0 — Price Contexts & La Vinoteca
+- + La Vinoteca como collector activo basado en catálogo VTEX público.
+- + CAV en modo diagnóstico con separación de precio Normal / Oferta / Socio.
+- + Modelo genérico de precios contextuales y observaciones históricas.
+- + Vista personal `/personal` separada del comparador público.
+- + Aislamiento de fuentes diagnósticas en buscador, histórico, favoritos y salida operativa.
+- + Migración Alembic `0009_price_contexts`.

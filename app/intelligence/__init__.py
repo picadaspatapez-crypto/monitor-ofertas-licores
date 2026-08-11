@@ -17,3 +17,5 @@ __all__ = [
     "reconcile_store_availability",
     "refresh_price_statistics",
 ]
+
+from app.intelligence.personal import refresh_personal_opportunities
