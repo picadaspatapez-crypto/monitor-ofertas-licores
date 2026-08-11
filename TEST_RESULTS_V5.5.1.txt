@@ -1,0 +1,15 @@
+v5.5.1 — VALIDACIÓN LOCAL
+=========================
+
+Base de trabajo: v5.5.0 Price Contexts & La Vinoteca
+
+Cambios validados:
+- La Vinoteca acepta HTTP 206 como éxito.
+- Parser de Content-Range probado.
+- CAV marcado como collector que requiere navegador.
+- CAV conserva diagnostic_mode=true / comparison_enabled=false.
+- Compilación Python de app y tests: OK.
+- Suite completa: 150 passed.
+
+Limitación:
+El entorno local no tiene DNS saliente, por lo que la navegación real contra lavinoteca.cl y cav.cl debe validarse desde Railway con un único Run now.

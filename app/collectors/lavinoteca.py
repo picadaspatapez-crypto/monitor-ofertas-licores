@@ -21,6 +21,8 @@ PAGE_SIZE = 50
 MAX_PAGES = 80
 MIN_PLAUSIBLE_PRODUCTS = 80
 REQUEST_TIMEOUT = (5, 22)
+SUCCESS_STATUSES = frozenset({200, 206})
+_CONTENT_RANGE_RE = re.compile(r"(?:[A-Za-z-]+\s+)?(\d+)-(\d+)/(\d+|\*)")
 
 
 def _session() -> requests.Session:
@@ -66,6 +68,24 @@ def _canonical_url(raw: str, link_text: str = "") -> str:
     if not url:
         return ""
     return urljoin(BASE_URL, url.split("?", 1)[0])
+
+
+def _content_range_total(response: requests.Response) -> int | None:
+    """Extrae el total anunciado por VTEX cuando responde contenido parcial.
+
+    El Search API público puede devolver HTTP 206 para un rango válido. En ese
+    caso el cuerpo JSON sigue siendo utilizable y Content-Range permite saber
+    cuándo se alcanzó el final del catálogo sin depender de un HTTP 416.
+    """
+
+    raw = (response.headers.get("Content-Range") or "").strip()
+    match = _CONTENT_RANGE_RE.search(raw)
+    if not match or match.group(3) == "*":
+        return None
+    try:
+        return max(0, int(match.group(3)))
+    except ValueError:
+        return None
 
 
 def _extract_product(item: dict) -> CollectedProduct | None:
@@ -148,7 +168,7 @@ def _collect_products() -> CollectionBatch:
             metrics.add("http", int(response.elapsed.total_seconds() * 1000))
             if response.status_code == 416:
                 break
-            if response.status_code != 200:
+            if response.status_code not in SUCCESS_STATUSES:
                 failed_pages += 1
                 raise RuntimeError(f"La Vinoteca VTEX respondió HTTP {response.status_code} en rango {start}-{end}.")
             try:
@@ -174,8 +194,16 @@ def _collect_products() -> CollectionBatch:
                         products[product.url] = product
                 else:
                     products[product.url] = product
-            print(f"La Vinoteca VTEX página {page + 1}: {len(payload)} registros, total={len(products)}", flush=True)
+            announced_total = _content_range_total(response)
+            print(
+                f"La Vinoteca VTEX página {page + 1}: HTTP={response.status_code}, "
+                f"{len(payload)} registros, total={len(products)}"
+                + (f", catálogo_anunciado={announced_total}" if announced_total is not None else ""),
+                flush=True,
+            )
             if len(payload) < PAGE_SIZE:
+                break
+            if announced_total is not None and end + 1 >= announced_total:
                 break
             if len(products) == before:
                 raise RuntimeError("La Vinoteca VTEX repitió una página completa sin productos nuevos.")

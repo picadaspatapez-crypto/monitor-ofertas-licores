@@ -1,3 +1,13 @@
+# v5.5.1 — La Vinoteca 206 + CAV Rendered Catalog Hotfix
+
+- La Vinoteca acepta HTTP `206 Partial Content` como respuesta válida del catálogo VTEX y usa `Content-Range` para detectar el final.
+- Mantiene HTTP `416` como señal segura de fin de rango.
+- CAV deja de paginar el HTML SSR estático con `requests`; ahora renderiza el buscador client-side con Playwright.
+- CAV extrae preferentemente `.ais-Hits-item` para excluir los bloques editoriales repetidos (ofertas, destacados, liquidación y recomendados).
+- Conserva CAV en modo diagnóstico y rechaza cualquier captura parcial o repetida antes de persistirla.
+- CAV pasa a `requires_browser=true`; no cambia comparador público ni migraciones.
+- Añade regresiones para HTTP 206, `Content-Range` y metadata de CAV.
+
 # v5.4.0 — Catalog Intelligence & Reliability
 
 - Corrige el borde del planificador con tolerancia configurable y estado `DUE_SOON`.

@@ -155,3 +155,25 @@ def test_personal_command_aliases():
     from app.telegram_bot.commands import parse_command
     assert parse_command("/personal").name == "personal_opportunities"
     assert parse_command("/miprecio").name == "personal_opportunities"
+
+
+def test_lavinoteca_accepts_http_206_as_successful_partial_response():
+    from app.collectors.lavinoteca import SUCCESS_STATUSES
+    assert 200 in SUCCESS_STATUSES
+    assert 206 in SUCCESS_STATUSES
+
+
+def test_lavinoteca_parses_vtex_content_range_total():
+    from requests import Response
+    from app.collectors.lavinoteca import _content_range_total
+
+    response = Response()
+    response.headers["Content-Range"] = "resources 0-49/437"
+    assert _content_range_total(response) == 437
+
+
+def test_cav_diagnostic_now_requires_browser_rendering():
+    from app.collectors.cav import CAVCollector
+    assert CAVCollector.metadata.requires_browser is True
+    assert CAVCollector.metadata.comparison_enabled is False
+    assert CAVCollector.metadata.diagnostic_mode is True
