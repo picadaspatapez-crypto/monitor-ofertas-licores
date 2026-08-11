@@ -1,0 +1,29 @@
+v5.5.2 — VALIDACIÓN LOCAL
+==========================
+
+Base: v5.5.1 La Vinoteca 206 + CAV Rendered Catalog Hotfix
+Versión: 5.5.2
+Release: Pagination Boundary & CAV Sharded Catalog Hotfix
+
+Validaciones ejecutadas sobre el árbol de desarrollo:
+- python -m compileall -q app tests main.py: OK
+- alembic heads: 0009_price_contexts (head)
+- pytest -q: 155 passed
+
+Validación del hotfix:
+- Se aplicó el contenido del hotfix sobre una copia limpia de v5.5.1.
+- Compilación Python: OK
+- Alembic head: 0009_price_contexts
+- pytest -q: 155 passed
+- app.version: 5.5.2 / Pagination Boundary & CAV Sharded Catalog Hotfix
+
+Regresiones nuevas:
+- La Vinoteca interpreta REST-Content-Range.
+- CAV construye URLs de shards con family.name y wine_type.name.
+- CAV descubre facetas de vino desde enlaces percent-encoded.
+- CAV no usa un shard global sin filtro.
+- CAV conserva defaults y agrega nuevas categorías descubiertas.
+
+Limitación de entorno:
+- No existe resolución DNS saliente en el sandbox para ejecutar una captura real contra lavinoteca.cl/cav.cl.
+- La validación HTTP final debe realizarse con un único Run now en Railway.

@@ -78,7 +78,15 @@ def _content_range_total(response: requests.Response) -> int | None:
     cuándo se alcanzó el final del catálogo sin depender de un HTTP 416.
     """
 
-    raw = (response.headers.get("Content-Range") or "").strip()
+    raw = ""
+    # VTEX no es totalmente uniforme entre endpoints/proxies. El Legacy Search
+    # suele usar Content-Range, mientras otros servicios VTEX exponen
+    # REST-Content-Range. Aceptamos ambos sin depender de uno solo.
+    for header_name in ("Content-Range", "REST-Content-Range", "X-VTEX-Content-Range"):
+        candidate = (response.headers.get(header_name) or "").strip()
+        if candidate:
+            raw = candidate
+            break
     match = _CONTENT_RANGE_RE.search(raw)
     if not match or match.group(3) == "*":
         return None
@@ -155,6 +163,7 @@ def _collect_products() -> CollectionBatch:
     products: dict[str, CollectedProduct] = {}
     pages = cards = duplicates = failed_pages = 0
     section_started = time.monotonic()
+    previous_payload_signature: tuple[str, ...] | None = None
     try:
         for page in range(MAX_PAGES):
             ensure_budget(f"La Vinoteca VTEX página {page + 1}")
@@ -180,6 +189,16 @@ def _collect_products() -> CollectionBatch:
             pages += 1
             if not payload:
                 break
+
+            # Firma del lote bruto. Algunos storefronts VTEX no devuelven 416 al
+            # superar el último rango: vuelven a entregar la última página. La
+            # firma permite distinguir ese clamp terminal de una repetición
+            # inesperada en medio del catálogo.
+            payload_signature = tuple(
+                str(raw.get("productId") or raw.get("link") or raw.get("linkText") or index)
+                for index, raw in enumerate(payload)
+                if isinstance(raw, dict)
+            )
             before = len(products)
             for raw in payload:
                 cards += 1
@@ -206,7 +225,28 @@ def _collect_products() -> CollectionBatch:
             if announced_total is not None and end + 1 >= announced_total:
                 break
             if len(products) == before:
+                # Caso observado en producción: el rango 1000-1049 fue
+                # respondido con la última página completa cuando ya existían
+                # 996 productos únicos. Si el offset solicitado ya quedó por
+                # detrás del total observable y la página no aporta nada, es una
+                # señal terminal fuerte; no debe degradar una captura completa.
+                terminal_clamp = (
+                    len(products) >= MIN_PLAUSIBLE_PRODUCTS
+                    and start >= len(products)
+                    and (
+                        payload_signature == previous_payload_signature
+                        or start >= len(products)
+                    )
+                )
+                if terminal_clamp:
+                    print(
+                        f"La Vinoteca VTEX fin confirmado por clamp terminal: "
+                        f"rango {start}-{end}, productos_unicos={len(products)}.",
+                        flush=True,
+                    )
+                    break
                 raise RuntimeError("La Vinoteca VTEX repitió una página completa sin productos nuevos.")
+            previous_payload_signature = payload_signature
             time.sleep(random.uniform(0.35, 0.8))
     finally:
         session.close()

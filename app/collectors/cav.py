@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import html as html_lib
 import random
 import re
 import time
 import unicodedata
-from urllib.parse import urlencode, urljoin, urlparse, urlunparse
+from dataclasses import dataclass
+from urllib.parse import parse_qs, urlencode, unquote_plus, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, sync_playwright
@@ -17,17 +19,43 @@ from app.performance import PerformanceSettings, install_resource_blocking
 BASE_URL = "https://cav.cl"
 SHOP_URL = f"{BASE_URL}/tienda"
 PAGE_SIZE = 48
-MAX_PAGES = 60
-MIN_PLAUSIBLE_PRODUCTS = 60
+MAX_PAGES_PER_SHARD = 30
+# La tienda publica actualmente alrededor de mil productos de vino y más de un
+# centenar de destilados/otros alcoholes. En diagnóstico preferimos fallar antes
+# que declarar cobertura completa con un subconjunto pequeño.
+MIN_PLAUSIBLE_PRODUCTS = 800
 BROWSER_NAV_TIMEOUT_MS = 30_000
-# El HTML entregado sin JavaScript contiene aproximadamente 20-30 productos de
-# bloques editoriales (ofertas, destacados, liquidación, recomendados). El
-# listado principal es client-side; por eso no aceptamos ese HTML estático como
-# catálogo completo.
 STATIC_EDITORIAL_CEILING = 35
 
 PRODUCT_LINK_SELECTOR = 'a[href*="/tienda/producto/"]'
 ALGOLIA_HIT_SELECTOR = ".ais-Hits-item, .ais-InfiniteHits-item, [class*='ais-Hits-item']"
+
+# CAV expone en la URL un estado de búsqueda compatible con InstantSearch:
+# fR[family.name], fR[wine_type.name], hPP, idx, p y q. La búsqueda global se
+# acerca/supera el límite habitual de paginación de Algolia, por lo que el
+# collector no vuelve a recorrer el índice global. Se particiona por familias y,
+# para Vinos, por categoría/tipo.
+DEFAULT_WINE_TYPES = (
+    "Tinto",
+    "Ensamblaje Tinto",
+    "Blanco",
+    "Espumoso",
+    "Bajos Y Sin Alcohol",
+    "Ensamblaje Blanco",
+    "Rosado",
+    "Naranjo",
+    "Sin Informacion",
+)
+
+# Solo familias pertinentes para el monitor. Accesorios, revistas/libros y otras
+# familias editoriales quedan fuera deliberadamente.
+ALCOHOL_FAMILIES = (
+    "Licores",
+    "Whisky",
+    "Piscos",
+    "Packs",
+    "Cervezas",
+)
 
 _LABEL_RE = {
     "member": re.compile(r"Socio\s*:\s*\$?\s*([\d.]+)", re.I),
@@ -37,6 +65,14 @@ _LABEL_RE = {
 }
 _PRODUCT_PATH_RE = re.compile(r"/tienda/producto/", re.I)
 _SKU_RE = re.compile(r"-(\d{3,})/?$")
+
+
+@dataclass(frozen=True)
+class _Shard:
+    key: str
+    label: str
+    filters: tuple[tuple[str, str], ...]
+    max_plausible: int
 
 
 def _fold(value: str) -> str:
@@ -113,8 +149,6 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
         name = _name_from_card(card, link)
         if len(name) < 3:
             continue
-        # CAV está en diagnóstico: el Product conserva el precio normal como base,
-        # mientras todos los precios visibles se guardan como contextos separados.
         current = normal or sale or member
         assert current is not None
         quotes: list[CollectedPriceQuote] = []
@@ -132,26 +166,29 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
             current_price=current,
             regular_price=normal if normal and normal > current else None,
             discount_pct=((normal - current) / normal if normal and normal > current else 0.0),
-            source_sections=("CAV diagnóstico renderizado",),
+            source_sections=("CAV diagnóstico segmentado",),
             sku=sku_match.group(1) if sku_match else None,
             price_quotes=tuple(quotes),
         )
     return products, cards
 
 
-def _page_url(page: int) -> str:
-    return f"{SHOP_URL}?{urlencode({'idx': 'products', 'p': page, 'hPP': PAGE_SIZE, 'q': ''})}"
+def _page_url(page: int, filters: tuple[tuple[str, str], ...] = ()) -> str:
+    params: list[tuple[str, str | int]] = [
+        ("idx", "products"),
+        ("p", page),
+        ("hPP", PAGE_SIZE),
+        ("q", ""),
+    ]
+    params.extend(filters)
+    return f"{SHOP_URL}?{urlencode(params)}"
 
 
 def _wait_for_rendered_catalog(page: Page, timeout_ms: int) -> bool:
-    """Espera el listado client-side de CAV, no solo los bloques SSR estáticos."""
-
     try:
         page.locator(ALGOLIA_HIT_SELECTOR).first.wait_for(state="attached", timeout=timeout_ms)
         return True
     except PlaywrightTimeoutError:
-        # Fallback diagnóstico: algunos despliegues pueden cambiar la clase del
-        # widget aunque sigan renderizando tarjetas por JavaScript.
         try:
             page.locator(PRODUCT_LINK_SELECTOR).first.wait_for(state="attached", timeout=2_000)
             return True
@@ -160,36 +197,109 @@ def _wait_for_rendered_catalog(page: Page, timeout_ms: int) -> bool:
 
 
 def _rendered_catalog_markup(page: Page) -> tuple[str, int, str]:
-    """Devuelve preferentemente solo los hits del buscador de CAV.
-
-    Los bloques "Ofertas", "Destacados", "Liquidación" y "Recomendados" están
-    presentes en todas las URLs paginadas y fueron la causa de la falsa
-    repetición de v5.5.0. Al aislar `.ais-Hits-item` se pagina el catálogo real.
-    """
-
     hit_locator = page.locator(ALGOLIA_HIT_SELECTOR)
     hit_count = hit_locator.count()
     if hit_count:
         fragments = hit_locator.evaluate_all("els => els.map(el => el.outerHTML).join('\\n')")
         return f"<div>{fragments}</div>", hit_count, "algolia_hits"
 
-    # Fallback deliberadamente conservador: sirve para diagnosticar un cambio de
-    # clases, pero la validación posterior impide confundir los bloques estáticos
-    # con un catálogo completo.
     html = page.content()
     link_count = page.locator(PRODUCT_LINK_SELECTOR).count()
     return html, link_count, "rendered_full_page_fallback"
+
+
+def _discover_filter_values(html: str, key: str) -> tuple[str, ...]:
+    """Descubre valores de facetas expuestos por CAV en hrefs de la página.
+
+    Soporta tanto URLs normales como entidades HTML/URLs percent-encoded. Si el
+    frontend cambia y deja de exponer estos enlaces, el caller conserva una lista
+    conocida y segura como fallback.
+    """
+
+    target = f"fR[{key}][0]"
+    values: set[str] = set()
+    soup = BeautifulSoup(html, "html.parser")
+    for node in soup.find_all(href=True):
+        href = html_lib.unescape(str(node.get("href") or ""))
+        query = parse_qs(urlparse(urljoin(BASE_URL, href)).query)
+        for value in query.get(target, []):
+            cleaned = " ".join(str(value).split()).strip()
+            if cleaned:
+                values.add(cleaned)
+
+    # Algunos bundles incrustan rutas en JSON/atributos en vez de anchors.
+    decoded = unquote_plus(html_lib.unescape(html))
+    pattern = re.compile(re.escape(target) + r"=([^&\"'<>]+)")
+    for match in pattern.finditer(decoded):
+        cleaned = " ".join(unquote_plus(match.group(1)).split()).strip()
+        if cleaned:
+            values.add(cleaned)
+    return tuple(sorted(values, key=lambda value: (_fold(value), value)))
+
+
+def _shards(discovered_wine_types: tuple[str, ...] = ()) -> tuple[_Shard, ...]:
+    wine_types = list(DEFAULT_WINE_TYPES)
+    for value in discovered_wine_types:
+        if _fold(value) not in {_fold(current) for current in wine_types}:
+            wine_types.append(value)
+
+    result: list[_Shard] = []
+    wine_limits = {
+        "tinto": 750,
+        "ensamblaje tinto": 450,
+        "blanco": 300,
+        "espumoso": 250,
+        "bajos y sin alcohol": 180,
+        "ensamblaje blanco": 150,
+        "rosado": 150,
+        "naranjo": 150,
+        "sin informacion": 180,
+    }
+    for wine_type in wine_types:
+        result.append(_Shard(
+            key=f"vinos_{re.sub(r'[^a-z0-9]+', '_', _fold(wine_type)).strip('_')}",
+            label=f"Vinos / {wine_type}",
+            filters=(
+                ("fR[family.name][0]", "Vinos"),
+                ("fR[wine_type.name][0]", wine_type),
+            ),
+            max_plausible=wine_limits.get(_fold(wine_type), 400),
+        ))
+
+    family_limits = {
+        "Licores": 300,
+        "Whisky": 180,
+        "Piscos": 120,
+        "Packs": 150,
+        "Cervezas": 120,
+    }
+    for family in ALCOHOL_FAMILIES:
+        result.append(_Shard(
+            key=re.sub(r"[^a-z0-9]+", "_", _fold(family)).strip("_"),
+            label=family,
+            filters=(("fR[family.name][0]", family),),
+            max_plausible=family_limits[family],
+        ))
+    return tuple(result)
+
+
+def _goto(page: Page, url: str, *, label: str) -> int | None:
+    response = page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_NAV_TIMEOUT_MS)
+    status = response.status if response is not None else None
+    if status in {403, 429, 430}:
+        raise RuntimeError(f"CAV diagnóstico limitado por HTTP {status} en {label}; se corta sin fan-out.")
+    if status is not None and not (200 <= status < 300):
+        raise RuntimeError(f"CAV diagnóstico respondió HTTP {status} en {label}.")
+    return status
 
 
 def _collect_products() -> CollectionBatch:
     settings = PerformanceSettings.from_env()
     started = time.monotonic()
     products: dict[str, CollectedProduct] = {}
-    pages = cards = duplicates = 0
-    previous_signature: tuple[str, ...] | None = None
-    pagination_complete = False
-    tolerated_zero_one_alias = False
-    source_mode = "cav_rendered_algolia"
+    total_pages = total_cards = duplicates = 0
+    section_stats: list[SectionStats] = []
+    source_modes: set[str] = set()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -201,120 +311,173 @@ def _collect_products() -> CollectionBatch:
         page = context.new_page()
         page.set_default_timeout(settings.product_wait_timeout_ms)
         try:
-            for page_number in range(MAX_PAGES):
-                ensure_budget(f"CAV diagnóstico renderizado página {page_number + 1}")
-                url = _page_url(page_number)
-                response = page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_NAV_TIMEOUT_MS)
-                status = response.status if response is not None else None
-                if status in {403, 429, 430}:
-                    raise RuntimeError(f"CAV diagnóstico limitado por HTTP {status}; se corta sin fan-out.")
-                if status is not None and not (200 <= status < 300):
-                    raise RuntimeError(f"CAV diagnóstico respondió HTTP {status} en página {page_number + 1}.")
+            # Descubrimiento de categorías de vino. No usamos el índice global
+            # como fuente de cobertura, porque puede quedar truncado por el límite
+            # de paginación del buscador.
+            discovered_wine_types: tuple[str, ...] = ()
+            try:
+                ensure_budget("CAV diagnóstico descubrimiento de facetas")
+                discovery_url = _page_url(0, (("fR[family.name][0]", "Vinos"),))
+                _goto(page, discovery_url, label="descubrimiento de facetas")
+                if _wait_for_rendered_catalog(page, settings.product_wait_timeout_ms):
+                    page.wait_for_timeout(max(500, settings.quick_settle_ms))
+                    discovered_wine_types = _discover_filter_values(page.content(), "wine_type.name")
+            except Exception as exc:  # fallback seguro a categorías conocidas
+                print(f"CAV diagnóstico: no se pudieron descubrir facetas dinámicas ({exc}); se usan defaults.", flush=True)
 
-                rendered = _wait_for_rendered_catalog(page, settings.product_wait_timeout_ms)
-                if not rendered:
-                    raise RuntimeError(
-                        "CAV no renderizó el listado de productos client-side dentro del tiempo esperado."
-                    )
-                # Damos un margen corto para que InstantSearch termine de poblar
-                # precios/tarjetas después de insertar el contenedor de hits.
-                page.wait_for_timeout(max(500, settings.quick_settle_ms))
-                markup, hit_count, mode = _rendered_catalog_markup(page)
-                parsed, page_cards = _parse_html(markup)
-                pages += 1
-                cards += page_cards
+            shard_list = _shards(discovered_wine_types)
+            print(
+                "CAV diagnóstico segmentado: "
+                + ", ".join(shard.label for shard in shard_list),
+                flush=True,
+            )
 
-                if mode != "algolia_hits":
-                    source_mode = "cav_rendered_dom_fallback"
-                    if page_number == 0 and len(parsed) <= STATIC_EDITORIAL_CEILING:
+            for shard in shard_list:
+                ensure_budget(f"CAV diagnóstico shard {shard.label}")
+                shard_started = time.monotonic()
+                shard_seen: dict[str, CollectedProduct] = {}
+                shard_pages = shard_cards = shard_duplicates = 0
+                previous_signature: tuple[str, ...] | None = None
+                tolerated_zero_one_alias = False
+                shard_complete = False
+                shard_mode = "rendered_full_page_fallback"
+
+                for page_number in range(MAX_PAGES_PER_SHARD):
+                    ensure_budget(f"CAV {shard.label} página {page_number + 1}")
+                    url = _page_url(page_number, shard.filters)
+                    status = _goto(page, url, label=f"{shard.label} página {page_number + 1}")
+                    if not _wait_for_rendered_catalog(page, settings.product_wait_timeout_ms):
                         raise RuntimeError(
-                            "CAV solo mostró los bloques editoriales estáticos; el listado dinámico de búsqueda "
-                            "no quedó disponible. No se persiste una captura parcial."
+                            f"CAV {shard.label} no renderizó el listado dentro del tiempo esperado."
                         )
+                    page.wait_for_timeout(max(500, settings.quick_settle_ms))
+                    markup, hit_count, mode = _rendered_catalog_markup(page)
+                    parsed, page_cards = _parse_html(markup)
+                    shard_mode = mode
+                    source_modes.add(mode)
+                    shard_pages += 1
+                    shard_cards += page_cards
+                    total_pages += 1
+                    total_cards += page_cards
 
-                if not parsed:
-                    if page_number == 0:
-                        raise RuntimeError("CAV no entregó tarjetas compatibles tras renderizar JavaScript.")
-                    pagination_complete = True
-                    break
+                    if not parsed:
+                        if page_number == 0:
+                            # Una subcategoría de vino puede desaparecer del
+                            # catálogo. Si es una faceta conocida pero hoy vacía,
+                            # se considera shard vacío, no error estructural.
+                            if shard.key.startswith("vinos_"):
+                                shard_complete = True
+                                print(f"CAV {shard.label}: sin productos vigentes; shard vacío.", flush=True)
+                                break
+                            raise RuntimeError(f"CAV {shard.label} no entregó tarjetas compatibles.")
+                        shard_complete = True
+                        break
 
-                signature = tuple(sorted(parsed))
-                if signature == previous_signature:
-                    # Algunos routers tratan p=0 y p=1 como alias de la primera
-                    # página. Permitimos exactamente esa ambigüedad y probamos p=2;
-                    # cualquier repetición posterior se considera cobertura incompleta.
-                    if page_number == 1 and not tolerated_zero_one_alias:
+                    signature = tuple(sorted(parsed))
+                    if page_number == 1 and signature == previous_signature and not tolerated_zero_one_alias:
                         tolerated_zero_one_alias = True
                         print(
-                            "CAV diagnóstico: p=0 y p=1 parecen alias; se prueba la página siguiente.",
+                            f"CAV {shard.label}: p=0 y p=1 parecen alias; se prueba la página siguiente.",
                             flush=True,
                         )
                         continue
-                    raise RuntimeError(
-                        f"CAV repitió el listado renderizado en página {page_number + 1}; "
-                        "se rechaza la captura para evitar declarar cobertura falsa."
+
+                    before_shard = len(shard_seen)
+                    for url_key, product in parsed.items():
+                        if url_key in shard_seen:
+                            shard_duplicates += 1
+                        shard_seen[url_key] = product
+                        if url_key in products:
+                            duplicates += 1
+                        products[url_key] = product
+                    new_count = len(shard_seen) - before_shard
+
+                    print(
+                        f"CAV {shard.label} página {page_number + 1}: HTTP={status}, "
+                        f"modo={mode}, hits_dom={hit_count}, productos={len(parsed)}, "
+                        f"nuevos_shard={new_count}, shard_total={len(shard_seen)}, total={len(products)}",
+                        flush=True,
                     )
-                previous_signature = signature
 
-                before = len(products)
-                for url_key, product in parsed.items():
-                    if url_key in products:
-                        duplicates += 1
-                    products[url_key] = product
-                new_count = len(products) - before
-                print(
-                    f"CAV diagnóstico renderizado página {page_number + 1}: HTTP={status}, "
-                    f"modo={mode}, hits={hit_count}, productos={len(parsed)}, "
-                    f"nuevos={new_count}, total={len(products)}",
-                    flush=True,
-                )
+                    if len(shard_seen) > shard.max_plausible:
+                        raise RuntimeError(
+                            f"CAV {shard.label} superó el máximo plausible ({len(shard_seen)} > "
+                            f"{shard.max_plausible}); probablemente el filtro no fue aplicado."
+                        )
 
-                # En el modo Algolia el número de hits es la señal correcta de
-                # fin. En fallback DOM solo aceptamos fin por página vacía, porque
-                # los bloques editoriales pueden alterar el conteo.
-                if mode == "algolia_hits" and hit_count < PAGE_SIZE:
-                    pagination_complete = True
-                    break
-                time.sleep(random.uniform(0.8, 1.5))
-            else:
-                raise RuntimeError(
-                    f"CAV alcanzó el límite de {MAX_PAGES} páginas sin una señal confiable de fin de catálogo."
-                )
+                    # Señal terminal principal para el fallback DOM: CAV conserva
+                    # bloques editoriales al pedir una página posterior al final.
+                    # Esos bloques ya fueron vistos, por lo que la primera página
+                    # sin URLs nuevas marca un final natural del shard. Esto evita
+                    # convertir la cola repetida en un falso error.
+                    if page_number > 0 and new_count == 0:
+                        shard_complete = True
+                        print(
+                            f"CAV {shard.label}: fin confirmado por cola sin productos nuevos "
+                            f"(página {page_number + 1}).",
+                            flush=True,
+                        )
+                        break
+
+                    # Si el frontend vuelve a exponer hits Algolia estándar, una
+                    # página corta es una señal explícita de fin y evita el probe
+                    # adicional.
+                    if mode == "algolia_hits" and hit_count < PAGE_SIZE:
+                        shard_complete = True
+                        break
+
+                    previous_signature = signature
+                    time.sleep(random.uniform(0.55, 1.1))
+                else:
+                    raise RuntimeError(
+                        f"CAV {shard.label} alcanzó {MAX_PAGES_PER_SHARD} páginas sin señal confiable de fin."
+                    )
+
+                if not shard_complete:
+                    raise RuntimeError(f"CAV {shard.label} terminó sin confirmar cobertura.")
+
+                section_stats.append(SectionStats(
+                    key=f"cav_{shard.key}",
+                    name=f"CAV diagnóstico · {shard.label}",
+                    url=_page_url(0, shard.filters),
+                    pages_visited=shard_pages,
+                    cards_seen=shard_cards,
+                    unique_products=len(shard_seen),
+                    duplicates_removed=shard_duplicates,
+                    duration_ms=int((time.monotonic() - shard_started) * 1000),
+                    status="success",
+                    structural_warning=False,
+                ))
         finally:
             context.close()
             browser.close()
 
     count = len(products)
-    health_status = "HEALTHY" if count >= MIN_PLAUSIBLE_PRODUCTS and pagination_complete else "BROKEN"
+    health_status = "HEALTHY" if count >= MIN_PLAUSIBLE_PRODUCTS else "BROKEN"
     health_score = 100 if health_status == "HEALTHY" else (20 if count else 0)
-    section = SectionStats(
-        key="cav_diagnostic",
-        name="CAV catálogo diagnóstico renderizado",
-        url=SHOP_URL,
-        pages_visited=pages,
-        cards_seen=cards,
-        unique_products=count,
-        duplicates_removed=duplicates,
-        duration_ms=int((time.monotonic() - started) * 1000),
-        status="success" if health_status == "HEALTHY" else "failed",
-        structural_warning=health_status != "HEALTHY",
-    )
+    if health_status != "HEALTHY":
+        raise RuntimeError(
+            f"CAV entregó una cobertura segmentada no confiable ({count} productos; "
+            f"mínimo esperado {MIN_PLAUSIBLE_PRODUCTS}). No se persiste la captura parcial."
+        )
+
+    discovery_source = "cav_sharded_" + ("algolia_hits" if source_modes == {"algolia_hits"} else "rendered_dom")
     return CollectionBatch(
         products=sorted(products.values(), key=lambda item: (item.name.casefold(), item.url)),
         stats=CollectionStats(
-            pages_visited=pages,
-            cards_seen=cards,
+            pages_visited=total_pages,
+            cards_seen=total_cards,
             unique_products=count,
-            sections_discovered=1,
-            sections_visited=1,
-            sections_succeeded=int(health_status == "HEALTHY"),
-            sections_failed=int(health_status != "HEALTHY"),
+            sections_discovered=len(section_stats),
+            sections_visited=len(section_stats),
+            sections_succeeded=len(section_stats),
+            sections_failed=0,
             duplicates_removed=duplicates,
-            discovery_source=source_mode,
+            discovery_source=discovery_source,
             health_status=health_status,
             health_score=health_score,
-            structural_warnings=int(health_status != "HEALTHY"),
-            section_stats=(section,),
+            structural_warnings=0,
+            section_stats=tuple(section_stats),
             performance_ms={"total_collect": int((time.monotonic() - started) * 1000)},
         ),
     )

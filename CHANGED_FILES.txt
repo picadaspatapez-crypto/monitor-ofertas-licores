@@ -1,9 +1,9 @@
 CHANGELOG.md
-DEPLOY_V5.5.1.md
+DEPLOY_V5.5.2.md
 README-HOTFIX.txt
-TEST_RESULTS_V5.5.1.txt
+TEST_RESULTS_V5.5.2.txt
 app/collectors/cav.py
 app/collectors/lavinoteca.py
 app/version.py
-tests/test_v55_price_contexts.py
+tests/test_v552_pagination_sharding.py
 tests/test_version.py

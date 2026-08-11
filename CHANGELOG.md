@@ -1,3 +1,14 @@
+# v5.5.2 — Pagination Boundary & CAV Sharded Catalog Hotfix
+
+- La Vinoteca reconoce la repetición terminal posterior al último rango VTEX como fin de catálogo y no como fallo.
+- La Vinoteca acepta `Content-Range`, `REST-Content-Range` y `X-VTEX-Content-Range` como fuentes del total anunciado.
+- CAV abandona el índice global que se estanca alrededor del límite de paginación y divide la captura en shards por familia.
+- Vinos CAV se subdivide por `wine_type.name` y descubre nuevas facetas cuando el frontend las expone.
+- Cada shard CAV termina de forma segura ante una cola sin productos nuevos y mantiene límites plausibles para detectar filtros ignorados.
+- CAV permanece en diagnóstico y fuera del comparador público.
+- Sin migraciones nuevas; Alembic continúa en `0009_price_contexts`.
+- Suite total: 155 pruebas.
+
 # v5.5.1 — La Vinoteca 206 + CAV Rendered Catalog Hotfix
 
 - La Vinoteca acepta HTTP `206 Partial Content` como respuesta válida del catálogo VTEX y usa `Content-Range` para detectar el final.
