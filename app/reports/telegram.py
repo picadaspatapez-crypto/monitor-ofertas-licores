@@ -88,6 +88,17 @@ def _change_lines(saved: SavedProduct) -> list[str]:
 
 
 def _ranking_reason(saved: SavedProduct) -> str:
+    # En fuentes personales-only (hoy CAV), ``current_price`` puede ser una
+    # proyección del precio MEMBER recolectado en la misma revisión. Se marca
+    # explícitamente para que Telegram no lo describa como una oferta pública.
+    if saved.item.store.casefold() == "cav":
+        for quote in saved.item.price_quotes:
+            if (
+                (quote.price_type or "").strip().upper() == "MEMBER"
+                and int(quote.price) == int(saved.item.current_price)
+            ):
+                return "precio socio CAV"
+
     real_pct = _real_drop_pct(saved)
     reported_pct = saved.item.discount_pct if _reported_discount(saved) else 0.0
     if real_pct > 0 and real_pct >= reported_pct:

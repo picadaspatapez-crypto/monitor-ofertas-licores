@@ -30,6 +30,8 @@ from app.notifications import (
     build_comparison_notification_bundles,
     build_smart_notification_bundles,
     build_personal_price_notification_bundles,
+    build_personal_store_ranking_bundle,
+    member_priced_saved_items,
 )
 from app.performance import PerformanceSettings
 from app.repositories import (
@@ -352,6 +354,8 @@ def _send_store_notifications(
     analysis,
     previous_health: str | None,
     previous_count: int | None,
+    comparison_enabled: bool = True,
+    personal_comparison_enabled: bool = False,
 ) -> None:
     with SessionLocal() as session:
         last_ranking_alert = latest_sent_alert(
@@ -368,6 +372,21 @@ def _send_store_notifications(
             session.expunge(last_ranking_alert)
         if last_incident_alert is not None:
             session.expunge(last_incident_alert)
+
+    personal_only = personal_comparison_enabled and not comparison_enabled
+    notification_items = saved
+    notification_analysis = analysis
+    if personal_only:
+        notification_items = member_priced_saved_items(
+            saved,
+            eligible_audiences=settings.personal_price_audiences,
+        )
+        notification_analysis = analyze_catalog(
+            notification_items,
+            missing_products=analysis.missing_products,
+            duration_ms=analysis.duration_ms,
+            collection_stats=analysis.collection_stats,
+        )
 
     context = SmartAlertContext(
         store_id=store_id,
@@ -386,10 +405,24 @@ def _send_store_notifications(
         last_incident_alert=last_incident_alert,
     )
     bundles = build_smart_notification_bundles(
-        items=saved,
-        analysis=analysis,
+        items=notification_items,
+        analysis=notification_analysis,
         context=context,
+        # El ranking personal-only se adjunta debajo en cada revisión HEALTHY
+        # para usar el precio MEMBER y no el precio público de Product.
+        include_ranking=not personal_only,
     )
+
+    if personal_only and notification_analysis.collection_stats.health_status == "HEALTHY":
+        ranking_bundle = build_personal_store_ranking_bundle(
+            store_id=store_id,
+            run_id=run_id,
+            store_name=store_name,
+            member_items=notification_items,
+            report_limit=settings.telegram_report_limit,
+        )
+        if ranking_bundle is not None:
+            bundles.append(ranking_bundle)
     if not bundles:
         print(
             f"Telegram {store_name}: sin cambios relevantes; 0 mensajes.",
@@ -636,6 +669,8 @@ def _run_collector(
             analysis=analysis,
             previous_health=previous_health,
             previous_count=previous_count,
+            comparison_enabled=collector.metadata.comparison_enabled,
+            personal_comparison_enabled=collector.metadata.personal_comparison_enabled,
         )
         notification_ms = int((time.monotonic() - notification_started) * 1000)
         total_ms = int((time.monotonic() - started) * 1000)

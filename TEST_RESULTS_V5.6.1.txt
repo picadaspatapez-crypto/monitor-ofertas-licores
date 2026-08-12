@@ -1,0 +1,29 @@
+v5.6.1 — CAV Store Ranking Notifications
+
+Validation date: 2026-08-12
+Base: v5.6.0 — Personal Pricing & CAV Activation
+
+Full suite:
+169 passed
+
+Focused notification/personal/report suite:
+21 passed
+
+Python compileall:
+OK
+
+Alembic head:
+0010_personal_pricing_activation (head)
+
+Database migrations:
+No new migration in v5.6.1.
+
+Behavior verified:
+- CAV MEMBER quote is projected as Precio actual in its store ranking.
+- CAV normal price is rendered as Precio normal informado.
+- Discount percentage and CLP saving are calculated from normal -> MEMBER.
+- Ranking reason is "precio socio CAV".
+- Ranking uses the standard 10-items-per-message format.
+- A new successful run gets a new deduplication key even if ranking content is unchanged.
+- Standard public ranking is suppressed for personal-only sources, avoiding duplicate/wrong CAV ranking.
+- Public comparison isolation remains unchanged.

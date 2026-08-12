@@ -394,7 +394,7 @@ class SearchApplication:
 
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/5.6.0"
+    server_version = "LiquorSearch/5.6.1"
 
     @property
     def app(self) -> SearchApplication:

@@ -19,6 +19,12 @@ __all__ = [
     "build_smart_notification_bundles",
     "ranking_fingerprint",
     "build_personal_price_notification_bundles",
+    "member_priced_saved_items",
+    "build_personal_store_ranking_bundle",
 ]
 
-from app.notifications.personal import build_personal_price_notification_bundles
+from app.notifications.personal import (
+    build_personal_price_notification_bundles,
+    build_personal_store_ranking_bundle,
+    member_priced_saved_items,
+)

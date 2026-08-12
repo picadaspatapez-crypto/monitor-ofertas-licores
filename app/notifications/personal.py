@@ -2,15 +2,125 @@ from __future__ import annotations
 
 import hashlib
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.domain import SavedProduct
 from app.models import MasterProduct, PersonalOpportunitySnapshot, PriceQuoteObservation, Product, Store
-from app.notifications.policy import NotificationBundle
+from app.notifications.policy import NotificationBundle, ranking_fingerprint
+from app.reports.telegram import build_ranking_messages
 from app.repositories.common import utcnow
+
+
+def member_priced_saved_items(
+    items: list[SavedProduct],
+    *,
+    eligible_audiences: tuple[str, ...] | list[str] | set[str],
+) -> list[SavedProduct]:
+    """Proyecta publicaciones personales al precio MEMBER elegible.
+
+    CAV conserva ``Product.current_price`` como precio público/normal para no
+    contaminar el mercado general. Para el ranking de tienda necesitamos, en
+    cambio, mostrar exactamente el precio de socio que fue observado en la
+    misma revisión. Esta función crea una vista inmutable de ``SavedProduct``
+    usando las ``price_quotes`` recolectadas; no toca la base de datos.
+
+    ``previous_price`` se deja en ``None`` deliberadamente. Las bajas MEMBER
+    tienen su canal específico de alertas personales y así evitamos duplicar
+    una misma baja como evento estándar del collector.
+    """
+
+    audiences = {
+        str(value).strip().casefold()
+        for value in eligible_audiences
+        if str(value).strip()
+    }
+    if not audiences:
+        return []
+
+    projected: list[SavedProduct] = []
+    for saved in items:
+        eligible_member_quotes = [
+            quote
+            for quote in saved.item.price_quotes
+            if (quote.price_type or "").strip().upper() == "MEMBER"
+            and (quote.audience_key or "").strip().casefold() in audiences
+            and int(quote.price) > 0
+        ]
+        if not eligible_member_quotes:
+            continue
+
+        member = min(eligible_member_quotes, key=lambda quote: int(quote.price))
+        regular = int(member.regular_price) if member.regular_price else None
+        if regular is None:
+            public_prices = [
+                int(quote.price)
+                for quote in saved.item.price_quotes
+                if (quote.price_type or "").strip().upper() == "PUBLIC"
+                and int(quote.price) > 0
+            ]
+            regular = min(public_prices) if public_prices else None
+
+        current = int(member.price)
+        discount_pct = (
+            (regular - current) / regular
+            if regular is not None and regular > current
+            else 0.0
+        )
+        item = replace(
+            saved.item,
+            current_price=current,
+            regular_price=regular if regular is not None and regular > current else None,
+            discount_pct=discount_pct,
+        )
+        projected.append(replace(saved, item=item, previous_price=None))
+
+    return projected
+
+
+def build_personal_store_ranking_bundle(
+    *,
+    store_id: int,
+    run_id: int,
+    store_name: str,
+    member_items: list[SavedProduct],
+    report_limit: int = 30,
+) -> NotificationBundle | None:
+    """Ranking de tienda para una fuente personal-only (actualmente CAV).
+
+    A diferencia del digest global ``Tus mejores ventajas CAV``, este bundle
+    replica el formato ``Mejores precios 1-10 de 30 · <tienda>`` usado por el
+    resto de los collectors y se genera en *cada revisión HEALTHY*. El
+    ``run_id`` forma parte de la clave de deduplicación, por lo que un reintento
+    del mismo run no duplica mensajes, pero el siguiente run válido sí los
+    vuelve a emitir como pidió el usuario.
+    """
+
+    if not member_items:
+        return None
+    limit = max(1, min(int(report_limit), 30))
+    messages = build_ranking_messages(
+        store_name=store_name,
+        items=member_items,
+        report_limit=limit,
+    )
+    if not messages:
+        return None
+    fingerprint = ranking_fingerprint(member_items, limit=limit)
+    return NotificationBundle(
+        store_id=store_id,
+        run_id=run_id,
+        alert_type="personal_store_ranking",
+        deduplication_key=f"personal-store-ranking:{store_id}:{run_id}:{fingerprint[:20]}",
+        payload_hash=fingerprint,
+        reason=f"ranking de precio socio {store_name} tras revisión HEALTHY",
+        messages=tuple(messages),
+        product_id=int(member_items[0].product.id) if member_items else None,
+        price=member_items[0].item.current_price if member_items else None,
+    )
 
 
 @dataclass(frozen=True)

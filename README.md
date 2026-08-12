@@ -1,6 +1,6 @@
 # Monitor de Ofertas de Licores
 
-**Versión actual: v5.6.0 — Personal Pricing & CAV Activation.**
+**Versión actual: v5.6.1 — CAV Store Ranking Notifications.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial,
 comparar productos equivalentes, medir oportunidades reales y consultar el

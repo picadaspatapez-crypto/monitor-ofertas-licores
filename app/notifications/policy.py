@@ -180,6 +180,7 @@ def build_smart_notification_bundles(
     items: list[SavedProduct],
     analysis: CatalogAnalysis,
     context: SmartAlertContext,
+    include_ranking: bool = True,
 ) -> list[NotificationBundle]:
     now = context.now or _utcnow()
     stats = analysis.collection_stats
@@ -346,32 +347,33 @@ def build_smart_notification_bundles(
         )
         reasons.append("collector recuperado")
 
-    fingerprint = ranking_fingerprint(items, limit=context.report_limit)
-    ranking_due, ranking_reason = _ranking_is_due(
-        fingerprint=fingerprint,
-        last_alert=context.last_ranking_alert,
-        interval_hours=context.digest_interval_hours,
-        now=now,
-    )
-    if ranking_due:
-        ranking_messages = build_ranking_messages(
-            store_name=context.store_name,
-            items=items,
-            report_limit=context.report_limit,
+    if include_ranking:
+        fingerprint = ranking_fingerprint(items, limit=context.report_limit)
+        ranking_due, ranking_reason = _ranking_is_due(
+            fingerprint=fingerprint,
+            last_alert=context.last_ranking_alert,
+            interval_hours=context.digest_interval_hours,
+            now=now,
         )
-        if ranking_messages:
-            event_bundles.append(
-                NotificationBundle(
-                    store_id=context.store_id,
-                    run_id=context.run_id,
-                    alert_type="ranking_digest",
-                    deduplication_key=f"ranking-digest:{context.store_id}:{context.run_id}:{fingerprint[:20]}",
-                    payload_hash=fingerprint,
-                    reason=ranking_reason,
-                    messages=tuple(ranking_messages),
-                )
+        if ranking_due:
+            ranking_messages = build_ranking_messages(
+                store_name=context.store_name,
+                items=items,
+                report_limit=context.report_limit,
             )
-            reasons.append(ranking_reason)
+            if ranking_messages:
+                event_bundles.append(
+                    NotificationBundle(
+                        store_id=context.store_id,
+                        run_id=context.run_id,
+                        alert_type="ranking_digest",
+                        deduplication_key=f"ranking-digest:{context.store_id}:{context.run_id}:{fingerprint[:20]}",
+                        payload_hash=fingerprint,
+                        reason=ranking_reason,
+                        messages=tuple(ranking_messages),
+                    )
+                )
+                reasons.append(ranking_reason)
 
     if not event_bundles:
         return []

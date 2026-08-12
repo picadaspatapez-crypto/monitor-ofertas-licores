@@ -1,3 +1,12 @@
+# v5.6.1 — CAV Store Ranking Notifications
+
+- CAV recibe ahora, tras cada revisión HEALTHY, su bloque automático de `🏆 Mejores precios` con el mismo formato usado por las tiendas públicas.
+- El ranking CAV usa el precio `MEMBER/cav_member` como `Precio actual`, el precio normal CAV como referencia, y calcula descuento y ahorro informado.
+- Se mantiene CAV fuera del comparador público: `comparison_enabled=false` y `personal_comparison_enabled=true`.
+- El digest `Tus mejores ventajas CAV` y las alertas de bajas MEMBER permanecen activos como funciones independientes.
+- El ranking personal se deduplica por `run_id`: un reintento del mismo run no duplica mensajes, pero cada revisión HEALTHY nueva vuelve a publicar el top 30 en bloques 1-10, 11-20 y 21-30.
+- Sin cambios de esquema ni migraciones nuevas; Alembic continúa en `0010_personal_pricing_activation`.
+
 # v5.6.0 — Personal Pricing & CAV Activation
 
 - Activa CAV como fuente personal estable tras tres ciclos de validación de v5.5.2.
