@@ -212,3 +212,14 @@ code { color: #b9d7ff; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* v5.6 · comparación pública vs personal */
+.mode-switch { display: inline-flex; align-items: center; gap: 3px; padding: 3px; border: 1px solid #2d3949; border-radius: 999px; background: rgba(12,18,25,.72); }
+.mode-switch a { padding: 7px 11px; border-radius: 999px; color: #8796a8; text-decoration: none; font-size: .72rem; font-weight: 800; transition: background .15s ease, color .15s ease; }
+.mode-switch a.active { color: #e9f2ff; background: #1d2b3b; }
+.mode-switch a.active.personal { color: #d8c7ff; background: rgba(116,79,181,.26); }
+.context-label { padding: 3px 6px; border-radius: 999px; color: #9eacbc; background: rgba(94,111,132,.13); border: 1px solid rgba(121,139,160,.20); font-size: .57rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.context-label.member { color: #d8c5ff; background: rgba(118,77,184,.17); border-color: rgba(156,115,221,.30); }
+.personal-insight { border-color: rgba(151,104,221,.32); background: linear-gradient(145deg, rgba(113,72,176,.14), rgba(12,18,25,.78)); }
+.personal-insight strong { color: #d8c5ff; }
+@media (max-width: 620px) { .mode-switch { width: 100%; order: 2; } .mode-switch a { flex: 1; text-align: center; } .top-actions { flex-wrap: wrap; justify-content: flex-end; } }

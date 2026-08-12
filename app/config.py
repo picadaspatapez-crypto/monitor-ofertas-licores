@@ -37,6 +37,17 @@ def _non_negative_int(name: str, default: int) -> int:
     return value
 
 
+
+def _csv_env(name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    values = []
+    for part in raw.split(","):
+        value = part.strip().casefold()
+        if value and value not in values:
+            values.append(value)
+    return tuple(values)
+
+
 def _percentage(name: str, default: float) -> float:
     """Lee un porcentaje humano, por ejemplo 5 para representar 5 %."""
     value = float(os.getenv(name, str(default)))
@@ -70,6 +81,12 @@ class Settings:
     weekly_health_report: bool
     weekly_health_interval_hours: int
     opportunity_report_limit: int
+    personal_price_audiences: tuple[str, ...]
+    personal_alerts_enabled: bool
+    personal_alert_min_drop_pct: float
+    personal_alert_min_drop_amount: int
+    personal_alert_min_advantage_clp: int
+    personal_alert_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -114,5 +131,23 @@ class Settings:
             ),
             opportunity_report_limit=_positive_int(
                 "OPPORTUNITY_REPORT_LIMIT", 20
+            ),
+            personal_price_audiences=_csv_env(
+                "PERSONAL_PRICE_AUDIENCES", "cav_member"
+            ),
+            personal_alerts_enabled=_bool_env(
+                "PERSONAL_ALERTS_ENABLED", True
+            ),
+            personal_alert_min_drop_pct=_percentage(
+                "PERSONAL_ALERT_MIN_DROP_PERCENT", 5.0
+            ),
+            personal_alert_min_drop_amount=_non_negative_int(
+                "PERSONAL_ALERT_MIN_DROP_CLP", 1000
+            ),
+            personal_alert_min_advantage_clp=_non_negative_int(
+                "PERSONAL_ALERT_MIN_ADVANTAGE_CLP", 1000
+            ),
+            personal_alert_limit=_positive_int(
+                "PERSONAL_ALERT_LIMIT", 10
             ),
         )

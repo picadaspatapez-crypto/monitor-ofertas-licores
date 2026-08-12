@@ -37,6 +37,10 @@ def result_to_dict(result: SearchResult) -> dict:
         "days_at_current_price": result.days_at_current_price,
         "opportunity_score": result.opportunity_score,
         "opportunity_classification": result.opportunity_classification,
+        "price_mode": result.price_mode,
+        "public_reference_price": result.public_reference_price,
+        "personal_advantage_clp": result.personal_advantage_clp,
+        "personal_advantage_pct": round(result.personal_advantage_pct * 100, 1),
         "offers": [
             {
                 "product_id": offer.product_id,
@@ -47,6 +51,10 @@ def result_to_dict(result: SearchResult) -> dict:
                 "discount_pct": round(offer.discount_pct * 100, 1),
                 "url": offer.url,
                 "last_seen_at": offer.last_seen_at.isoformat(),
+                "price_type": offer.price_type,
+                "audience_key": offer.audience_key,
+                "eligibility_required": offer.eligibility_required,
+                "is_public_market": offer.is_public_market,
             }
             for offer in result.offers
         ],

@@ -22,6 +22,8 @@ class ExecutionView(Protocol):
     marked_unavailable: int
     reactivated: int
     diagnostic_mode: bool
+    comparison_enabled: bool
+    personal_comparison_enabled: bool
 
 
 def _duration(milliseconds: int) -> str:
@@ -38,7 +40,8 @@ def build_global_run_summary(
     wall_duration_ms: int,
 ) -> str:
     ordered = sorted(executions, key=lambda item: item.store_name.casefold())
-    public = [item for item in ordered if not getattr(item, "diagnostic_mode", False)]
+    public = [item for item in ordered if getattr(item, "comparison_enabled", True) and not getattr(item, "diagnostic_mode", False)]
+    personal = [item for item in ordered if getattr(item, "personal_comparison_enabled", False) and not getattr(item, "comparison_enabled", True) and not getattr(item, "diagnostic_mode", False)]
     diagnostic = [item for item in ordered if getattr(item, "diagnostic_mode", False)]
     updated = sum(item.execution_state == "UPDATED" and item.success for item in public)
     stale = sum(item.execution_state == "STALE" and item.success for item in public)
@@ -48,6 +51,7 @@ def build_global_run_summary(
         not item.success and item.execution_state not in {"PAUSED"}
     ) for item in public)
     diagnostic_ok = sum(item.success for item in diagnostic)
+    personal_ok = sum(item.success for item in personal)
     lines = [
         "📊 Revisión multi-tienda completada",
         "",
@@ -56,6 +60,7 @@ def build_global_run_summary(
         f"Revisiones programadas pendientes: {due_soon}",
         f"Tiendas pausadas: {paused}",
         f"Tiendas fallidas: {failed}",
+        f"Fuentes personales OK: {personal_ok}/{len(personal)}" if personal else "Fuentes personales: 0",
         f"Collectors diagnóstico OK: {diagnostic_ok}/{len(diagnostic)}" if diagnostic else "Collectors diagnóstico: 0",
         f"Duración collectors: {_duration(wall_duration_ms)}",
         "",
@@ -92,10 +97,12 @@ def build_global_run_summary(
         elif item.success:
             health = item.health_status or "UNKNOWN"
             icon = icons.get(health, "⚪")
-            prefix = "🧪" if getattr(item, "diagnostic_mode", False) else icon
+            personal_mode = getattr(item, "personal_comparison_enabled", False) and not getattr(item, "comparison_enabled", True)
+            prefix = "🧪" if getattr(item, "diagnostic_mode", False) else ("🟣" if personal_mode else icon)
             lines.append(f"{prefix} {item.store_name}")
+            suffix = " · DIAGNÓSTICO" if getattr(item, "diagnostic_mode", False) else (" · PERSONAL" if personal_mode else "")
             lines.append(
-                f"   {item.products_found} productos · {health}{' · DIAGNÓSTICO' if getattr(item, 'diagnostic_mode', False) else ''} · {_duration(item.duration_ms)}"
+                f"   {item.products_found} productos · {health}{suffix} · {_duration(item.duration_ms)}"
             )
             changes = []
             if item.price_drops:

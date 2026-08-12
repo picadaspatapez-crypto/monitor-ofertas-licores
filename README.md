@@ -1,12 +1,14 @@
 # Monitor de Ofertas de Licores
 
-**Versión actual: v5.4.0 — Catalog Intelligence & Reliability.**
+**Versión actual: v5.6.0 — Personal Pricing & CAV Activation.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial,
 comparar productos equivalentes, medir oportunidades reales y consultar el
 catálogo desde web o Telegram.
 
 ## Tiendas activas
+
+### Mercado público
 
 - Licor3B
 - Líquidos
@@ -15,11 +17,28 @@ catálogo desde web o Telegram.
 - Donde La Negra
 - Distribuidora La Modelo
 - Socomep
+- La Vinoteca
 
-La Barra, Tost y GradoÚnico permanecen fuera del registry activo. Sus collectors
-y datos históricos no se borran, pero no participan en resultados vigentes.
+### Fuente personal
 
-## Novedades de v5.4
+- CAV: activa para el perfil privado mediante precios `MEMBER`, pero continúa
+  excluida del comparador público.
+
+La Barra, Tost y GradoÚnico permanecen fuera del registry activo.
+
+## Novedades de v5.6
+
+- CAV deja el modo diagnóstico y pasa a `personal_comparison_enabled=true`.
+- El buscador web permite alternar entre **Mercado público** y **Con membresía CAV**.
+- Los precios de socio solo se usan cuando su audiencia está habilitada en
+  `PERSONAL_PRICE_AUDIENCES`.
+- El historial contextual separa `PUBLIC`, `SALE` y `MEMBER` por audiencia.
+- Opportunity Score personal usa ahorro, historia contextual, matching, frescura y escasez.
+- Telegram añade `/miprecio`, `/personal` y `/historialsocio`.
+- Alertas personales notifican bajas del precio MEMBER y ventajas relevantes frente al mejor precio público.
+- La comparación pública, favoritos públicos y Opportunity Score público siguen aislados de CAV.
+
+## Base heredada de v5.4
 
 ### Planificador verificable
 
@@ -83,9 +102,9 @@ Postgres
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.4.md`](DEPLOY_V5.4.md).
+Consulta [`DEPLOY_V5.6.md`](DEPLOY_V5.6.md).
 
-La versión incorpora la migración Alembic `0008_catalog_intelligence`. El
+La versión incorpora la migración Alembic `0010_personal_pricing_activation`. El
 `entrypoint.sh` existente ejecuta `alembic upgrade head` antes del pipeline.
 
 ## Ejecución local

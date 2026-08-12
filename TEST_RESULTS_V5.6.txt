@@ -1,0 +1,37 @@
+Monitor de Licores v5.6.0 — Personal Pricing & CAV Activation
+Validación final de empaquetado
+
+Base: v5.5.3 Search UI Refresh
+
+Suite automatizada en árbol de desarrollo:
+- 165 passed
+
+Compilación:
+- python -m compileall -q app tests: OK
+
+Alembic:
+- head: 0010_personal_pricing_activation
+- SQL offline del tramo 0009_price_contexts -> 0010_personal_pricing_activation: OK (dialecto PostgreSQL)
+
+Validación de hotfix:
+- Se extrajo una copia limpia del ZIP completo v5.5.3.
+- Se aplicó únicamente el contenido del hotfix v5.6 sobre esa copia.
+- Suite resultante: 165 passed.
+- compileall resultante: OK.
+- Alembic head resultante: 0010_personal_pricing_activation.
+
+Cobertura específica v5.6:
+- CAV deja DIAGNOSTIC y queda como fuente PERSONAL, no PUBLIC.
+- El comparador público continúa excluyendo CAV.
+- El comparador personal admite MEMBER/cav_member y conserva ofertas públicas como referencia.
+- Historial contextual separado por price_type + audience_key.
+- Opportunity Score personal persiste referencia pública y ventaja por membresía.
+- Alertas personales cubren baja de precio MEMBER y digest de ventaja frente al mercado público.
+- Web /buscar alterna Mercado público / Con membresía CAV.
+- Telegram soporta /personal, /miprecio y /historialsocio.
+- Resumen global separa tiendas públicas de fuentes personales.
+
+Validación pendiente de producción:
+- Aplicar migración 0010 en PostgreSQL de Railway.
+- Ejecutar un ciclo real para poblar price_context_statistics y recalcular personal_opportunity_snapshots.
+- Confirmar CAV HEALTHY · PERSONAL y que 8/8 tiendas públicas permanezcan operativas.

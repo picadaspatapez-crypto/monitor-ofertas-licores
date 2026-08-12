@@ -166,7 +166,7 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
             current_price=current,
             regular_price=normal if normal and normal > current else None,
             discount_pct=((normal - current) / normal if normal and normal > current else 0.0),
-            source_sections=("CAV diagnóstico segmentado",),
+            source_sections=("CAV precios personales",),
             sku=sku_match.group(1) if sku_match else None,
             price_quotes=tuple(quotes),
         )
@@ -287,9 +287,9 @@ def _goto(page: Page, url: str, *, label: str) -> int | None:
     response = page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_NAV_TIMEOUT_MS)
     status = response.status if response is not None else None
     if status in {403, 429, 430}:
-        raise RuntimeError(f"CAV diagnóstico limitado por HTTP {status} en {label}; se corta sin fan-out.")
+        raise RuntimeError(f"CAV personal limitado por HTTP {status} en {label}; se corta sin fan-out.")
     if status is not None and not (200 <= status < 300):
-        raise RuntimeError(f"CAV diagnóstico respondió HTTP {status} en {label}.")
+        raise RuntimeError(f"CAV personal respondió HTTP {status} en {label}.")
     return status
 
 
@@ -316,24 +316,24 @@ def _collect_products() -> CollectionBatch:
             # de paginación del buscador.
             discovered_wine_types: tuple[str, ...] = ()
             try:
-                ensure_budget("CAV diagnóstico descubrimiento de facetas")
+                ensure_budget("CAV personal descubrimiento de facetas")
                 discovery_url = _page_url(0, (("fR[family.name][0]", "Vinos"),))
                 _goto(page, discovery_url, label="descubrimiento de facetas")
                 if _wait_for_rendered_catalog(page, settings.product_wait_timeout_ms):
                     page.wait_for_timeout(max(500, settings.quick_settle_ms))
                     discovered_wine_types = _discover_filter_values(page.content(), "wine_type.name")
             except Exception as exc:  # fallback seguro a categorías conocidas
-                print(f"CAV diagnóstico: no se pudieron descubrir facetas dinámicas ({exc}); se usan defaults.", flush=True)
+                print(f"CAV personal: no se pudieron descubrir facetas dinámicas ({exc}); se usan defaults.", flush=True)
 
             shard_list = _shards(discovered_wine_types)
             print(
-                "CAV diagnóstico segmentado: "
+                "CAV precios personales: "
                 + ", ".join(shard.label for shard in shard_list),
                 flush=True,
             )
 
             for shard in shard_list:
-                ensure_budget(f"CAV diagnóstico shard {shard.label}")
+                ensure_budget(f"CAV personal shard {shard.label}")
                 shard_started = time.monotonic()
                 shard_seen: dict[str, CollectedProduct] = {}
                 shard_pages = shard_cards = shard_duplicates = 0
@@ -438,7 +438,7 @@ def _collect_products() -> CollectionBatch:
 
                 section_stats.append(SectionStats(
                     key=f"cav_{shard.key}",
-                    name=f"CAV diagnóstico · {shard.label}",
+                    name=f"CAV personal · {shard.label}",
                     url=_page_url(0, shard.filters),
                     pages_visited=shard_pages,
                     cards_seen=shard_cards,
@@ -493,7 +493,8 @@ class CAVCollector:
         connector_key=key,
         requires_browser=True,
         comparison_enabled=False,
-        diagnostic_mode=True,
+        diagnostic_mode=False,
+        personal_comparison_enabled=True,
     )
 
     def collect(self) -> CollectionBatch:

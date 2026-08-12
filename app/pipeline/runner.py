@@ -19,6 +19,7 @@ from app.intelligence import (
     persist_opportunity_snapshots,
     reconcile_store_availability,
     refresh_price_statistics,
+    refresh_context_price_statistics,
     refresh_personal_opportunities,
 )
 from app.models import ScrapeRun, Store
@@ -28,6 +29,7 @@ from app.notifications import (
     SmartAlertContext,
     build_comparison_notification_bundles,
     build_smart_notification_bundles,
+    build_personal_price_notification_bundles,
 )
 from app.performance import PerformanceSettings
 from app.repositories import (
@@ -77,6 +79,8 @@ class CollectorExecution:
     marked_unavailable: int = 0
     reactivated: int = 0
     diagnostic_mode: bool = False
+    comparison_enabled: bool = True
+    personal_comparison_enabled: bool = False
 
 
 
@@ -200,6 +204,9 @@ def _scheduled_execution_or_none(
         last_real_run_at=snapshot.finished_at,
         next_due_at=due_at,
         source=snapshot.source,
+        diagnostic_mode=collector.metadata.diagnostic_mode,
+        comparison_enabled=collector.metadata.comparison_enabled,
+        personal_comparison_enabled=collector.metadata.personal_comparison_enabled,
     )
 
 
@@ -661,6 +668,8 @@ def _run_collector(
             source=final_stats.discovery_source,
             marked_unavailable=availability.marked_unavailable,
             diagnostic_mode=collector.metadata.diagnostic_mode,
+            comparison_enabled=collector.metadata.comparison_enabled,
+            personal_comparison_enabled=collector.metadata.personal_comparison_enabled,
             reactivated=availability.reactivated,
         )
 
@@ -768,6 +777,8 @@ def _run_collector(
             sections_failed=1,
             execution_state="FAILED",
             diagnostic_mode=collector.metadata.diagnostic_mode,
+            comparison_enabled=collector.metadata.comparison_enabled,
+            personal_comparison_enabled=collector.metadata.personal_comparison_enabled,
         )
 
 
@@ -798,6 +809,7 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             )
             session.flush()
             historical = refresh_price_statistics(session)
+            contextual = refresh_context_price_statistics(session)
             comparison = analyze_cross_store_prices(
                 session,
                 run_ids=run_ids,
@@ -806,7 +818,9 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             opportunity_rows = persist_opportunity_snapshots(
                 session, comparison.opportunities
             )
-            personal_rows = refresh_personal_opportunities(session)
+            personal_rows = refresh_personal_opportunities(
+                session, eligible_audiences=settings.personal_price_audiences
+            )
             session.commit()
 
         print("=" * 64, flush=True)
@@ -824,9 +838,10 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
         print(f"Equivalencias verificadas.: {comparison.verified_matches}", flush=True)
         print(f"Estadísticas históricas...: {historical.rows_updated}", flush=True)
+        print(f"Históricos contextuales....: {contextual.rows_updated}", flush=True)
         print(f"Oportunidades de precio...: {len(comparison.opportunities)}", flush=True)
         print(f"Opportunity Scores guardados: {opportunity_rows}", flush=True)
-        print(f"Opportunity Scores personales (preview): {personal_rows}", flush=True)
+        print(f"Opportunity Scores personales: {personal_rows}", flush=True)
         print(f"Cambios de ganador........: {len(comparison.winner_changes)}", flush=True)
         print(f"Empates...................: {comparison.ties}", flush=True)
         print(f"Grupos no verificados.....: {comparison.unverified_groups}", flush=True)
@@ -865,6 +880,31 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             )
         else:
             print("Telegram comparador: ranking sin cambios; 0 mensajes.", flush=True)
+
+        if settings.personal_alerts_enabled:
+            with SessionLocal() as session:
+                personal_bundles = build_personal_price_notification_bundles(
+                    session,
+                    eligible_audiences=settings.personal_price_audiences,
+                    min_drop_pct=settings.personal_alert_min_drop_pct,
+                    min_drop_amount=settings.personal_alert_min_drop_amount,
+                    min_advantage_clp=settings.personal_alert_min_advantage_clp,
+                    limit=settings.personal_alert_limit,
+                )
+            if personal_bundles:
+                p_sent, p_skipped, p_failed = deliver_notification_bundles(
+                    SessionLocal=SessionLocal,
+                    bundles=personal_bundles,
+                    telegram_bot_token=settings.telegram_bot_token,
+                    telegram_chat_id=settings.telegram_chat_id,
+                    send_message_fn=send_message,
+                )
+                print(
+                    f"Telegram personal: enviados={p_sent}, omitidos={p_skipped}, fallidos={p_failed}.",
+                    flush=True,
+                )
+            else:
+                print("Telegram personal: sin bajas MEMBER relevantes.", flush=True)
 
         elapsed_ms = int((time.monotonic() - stage_started) * 1000)
         print(f"✓ Etapa cross-store completada en {elapsed_ms / 1000:.1f}s.", flush=True)
@@ -1125,10 +1165,17 @@ def run_pipeline() -> int:
         flush=True,
     )
     print(
+        "Precios personales: "
+        f"audiencias={','.join(settings.personal_price_audiences) or 'ninguna'}; "
+        f"alertas={'sí' if settings.personal_alerts_enabled else 'no'}; "
+        f"baja ≥ {settings.personal_alert_min_drop_pct:.1%} o ≥ ${settings.personal_alert_min_drop_amount:,}.".replace(",", "."),
+        flush=True,
+    )
+    print(
         "Resiliencia de tiendas: "
         f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h "
         f"(tolerancia {performance.scheduler_grace_minutes} min); "
-        "La Barra deshabilitada; La Vinoteca activa; CAV en diagnóstico sin afectar comparador público.",
+        "La Barra deshabilitada; La Vinoteca activa; CAV activo para precios personales y aislado del comparador público.",
         flush=True,
     )
 
@@ -1187,6 +1234,9 @@ def run_pipeline() -> int:
                             duration_ms=0,
                             error_message=f"{type(exc).__name__}: {exc}"[:1000],
                             execution_state="FAILED",
+                            diagnostic_mode=collector.metadata.diagnostic_mode,
+                            comparison_enabled=collector.metadata.comparison_enabled,
+                            personal_comparison_enabled=collector.metadata.personal_comparison_enabled,
                         )
                     )
                     print(

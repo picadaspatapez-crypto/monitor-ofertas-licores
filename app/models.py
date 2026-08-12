@@ -37,6 +37,7 @@ class Store(Base):
     currency_code: Mapped[str] = mapped_column(String(3), default="CLP")
     comparison_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     diagnostic_mode: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    personal_comparison_enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -285,7 +286,7 @@ class PriceQuoteObservation(Base):
 
 
 class PersonalOpportunitySnapshot(Base):
-    """Opportunity Score usando precios habilitados para el perfil personal."""
+    """Opportunity Score usando los precios habilitados para el perfil personal."""
 
     __tablename__ = "personal_opportunity_snapshots"
 
@@ -301,7 +302,42 @@ class PersonalOpportunitySnapshot(Base):
     winner_audience_key: Mapped[str] = mapped_column(String(80), default="public")
     saving_clp: Mapped[int] = mapped_column(Integer, default=0)
     saving_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    public_reference_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    personal_advantage_clp: Mapped[int] = mapped_column(Integer, default=0)
+    personal_advantage_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    history_position: Mapped[float] = mapped_column(Float, default=0.5)
+    match_confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    freshness_score: Mapped[float] = mapped_column(Float, default=1.0)
+    scarcity_score: Mapped[float] = mapped_column(Float, default=0.0)
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class PriceContextStatistic(Base):
+    """Estadísticas históricas de un precio contextual por publicación."""
+
+    __tablename__ = "price_context_statistics"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "price_type", "audience_key",
+            name="uq_price_context_statistic_context",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    price_type: Mapped[str] = mapped_column(String(30), index=True)
+    audience_key: Mapped[str] = mapped_column(String(80), index=True)
+    current_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_30d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_30d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    min_90d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    historical_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observations_30d: Mapped[int] = mapped_column(Integer, default=0)
+    observations_90d: Mapped[int] = mapped_column(Integer, default=0)
+    observations_total: Mapped[int] = mapped_column(Integer, default=0)
+    days_at_current_price: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class MatchingRule(Base):

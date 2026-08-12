@@ -18,4 +18,7 @@ __all__ = [
     "SmartAlertContext",
     "build_smart_notification_bundles",
     "ranking_fingerprint",
+    "build_personal_price_notification_bundles",
 ]
+
+from app.notifications.personal import build_personal_price_notification_bundles

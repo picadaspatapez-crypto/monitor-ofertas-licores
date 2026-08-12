@@ -29,6 +29,7 @@ class StoreMetadata:
     currency_code: str = "CLP"
     comparison_enabled: bool = True
     diagnostic_mode: bool = False
+    personal_comparison_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not self.name.strip():

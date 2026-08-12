@@ -39,6 +39,10 @@ def help_message(bot_username: str | None = None) -> str:
         f"<code>/historial johnnie black 750</code>\n"
         f"<code>/oportunidades</code>\n"
         f"<code>/mejores</code>\n\n"
+        f"🟣 <b>Precios personales</b>\n"
+        f"<code>/miprecio johnnie black 750</code>\n"
+        f"<code>/personal</code>\n"
+        f"<code>/historialsocio johnnie black 750</code>\n\n"
         f"⭐ <b>Favoritos y avisos</b>\n"
         f"<code>/favorito johnnie black 750</code>\n"
         f"<code>/avisar johnnie black 750 bajo 25000</code>\n"
@@ -157,8 +161,14 @@ def _result_lines(index: int, result: SearchResult) -> list[str]:
         regular = ""
         if offer.regular_price and offer.regular_price > offer.price:
             regular = f" <s>{format_clp(offer.regular_price)}</s>"
+        context = " · socio" if offer.price_type == "MEMBER" else (" · oferta" if result.price_mode == "personal" and offer.price_type == "SALE" else "")
         lines.append(
-            f"{icon} {_escape(offer.store_name)}: <b>{format_clp(offer.price)}</b>{regular}"
+            f"{icon} {_escape(offer.store_name)}: <b>{format_clp(offer.price)}</b>{regular}{context}"
+        )
+    if result.price_mode == "personal" and result.personal_advantage_clp > 0:
+        lines.append(
+            f"🟣 Ventaja vs mercado público: <b>{format_clp(result.personal_advantage_clp)}</b> "
+            f"({result.personal_advantage_pct * 100:.1f}%)"
         )
     if result.runner_up and result.saving_clp > 0:
         lines.append(
@@ -355,3 +365,38 @@ def format_favorite_deleted(favorite_id: int, deleted: bool) -> str:
         f"No encontré un favorito activo con ID <b>{favorite_id}</b>.\n"
         "Consulta <code>/misfavoritos</code>."
     )
+
+
+def personal_history_help_message() -> str:
+    return (
+        "🟣 Escribe el producto después del comando.\n\n"
+        "Ejemplo: <code>/historialsocio johnnie black 750</code>"
+    )
+
+
+def format_personal_history_result(query: str, result: SearchResult | None) -> str:
+    if result is None:
+        return no_results_message(query)
+    context = "socio" if result.winner.price_type == "MEMBER" else result.winner.price_type.casefold()
+    lines = [
+        "🟣 <b>Historial de precio personal</b>",
+        "",
+        f"<b>{_escape(result.canonical_name)}</b>",
+        f"Mejor para ti: <b>{format_clp(result.winner.price)}</b> · {_escape(result.winner.store_name)} ({_escape(context)})",
+    ]
+    if result.public_reference_price:
+        lines.append(f"Mejor precio público: <b>{format_clp(result.public_reference_price)}</b>")
+    if result.personal_advantage_clp > 0:
+        lines.append(f"Ventaja de membresía: <b>{format_clp(result.personal_advantage_clp)}</b> ({result.personal_advantage_pct:.1%})")
+    if result.min_30d:
+        lines.append(f"Mínimo del contexto 30 d: <b>{format_clp(result.min_30d)}</b>")
+    if result.avg_30d:
+        lines.append(f"Promedio del contexto 30 d: <b>{format_clp(round(result.avg_30d))}</b>")
+    if result.min_90d:
+        lines.append(f"Mínimo del contexto 90 d: <b>{format_clp(result.min_90d)}</b>")
+    if result.avg_90d:
+        lines.append(f"Promedio del contexto 90 d: <b>{format_clp(round(result.avg_90d))}</b>")
+    if result.historical_min:
+        lines.append(f"Mínimo histórico del contexto: <b>{format_clp(result.historical_min)}</b>")
+    lines.extend(["", result.winner.url])
+    return "\n".join(lines)

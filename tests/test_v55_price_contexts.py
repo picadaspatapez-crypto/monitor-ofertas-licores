@@ -18,7 +18,7 @@ def _session_factory():
     return engine, sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _store(session, *, name, key, comparison_enabled=True, diagnostic_mode=False):
+def _store(session, *, name, key, comparison_enabled=True, diagnostic_mode=False, personal_comparison_enabled=False):
     row = Store(
         name=name,
         slug=key,
@@ -28,6 +28,7 @@ def _store(session, *, name, key, comparison_enabled=True, diagnostic_mode=False
         requires_browser=False,
         comparison_enabled=comparison_enabled,
         diagnostic_mode=diagnostic_mode,
+        personal_comparison_enabled=personal_comparison_enabled,
     )
     session.add(row)
     session.flush()
@@ -112,7 +113,7 @@ def test_personal_preview_can_use_cav_without_changing_public_store_flag():
     engine, SessionLocal = _session_factory()
     with SessionLocal() as session:
         public = _store(session, name="La Vinoteca", key="lavinoteca")
-        cav = _store(session, name="CAV", key="cav", comparison_enabled=False, diagnostic_mode=True)
+        cav = _store(session, name="CAV", key="cav", comparison_enabled=False, diagnostic_mode=False, personal_comparison_enabled=True)
         run_public = ScrapeRun(store_id=public.id, status="running")
         run_cav = ScrapeRun(store_id=cav.id, status="running")
         session.add_all([run_public, run_cav])
@@ -142,13 +143,14 @@ def test_personal_preview_can_use_cav_without_changing_public_store_flag():
     engine.dispose()
 
 
-def test_cav_registry_is_diagnostic_and_lavinoteca_is_public():
+def test_cav_registry_is_personal_and_lavinoteca_is_public():
     from app.collectors.registry import enabled_collectors
     by_key = {collector.key: collector for collector in enabled_collectors()}
     assert by_key["lavinoteca"].metadata.comparison_enabled is True
     assert by_key["lavinoteca"].metadata.diagnostic_mode is False
     assert by_key["cav"].metadata.comparison_enabled is False
-    assert by_key["cav"].metadata.diagnostic_mode is True
+    assert by_key["cav"].metadata.diagnostic_mode is False
+    assert by_key["cav"].metadata.personal_comparison_enabled is True
 
 
 def test_personal_command_aliases():
@@ -172,8 +174,9 @@ def test_lavinoteca_parses_vtex_content_range_total():
     assert _content_range_total(response) == 437
 
 
-def test_cav_diagnostic_now_requires_browser_rendering():
+def test_cav_personal_source_requires_browser_rendering():
     from app.collectors.cav import CAVCollector
     assert CAVCollector.metadata.requires_browser is True
     assert CAVCollector.metadata.comparison_enabled is False
-    assert CAVCollector.metadata.diagnostic_mode is True
+    assert CAVCollector.metadata.diagnostic_mode is False
+    assert CAVCollector.metadata.personal_comparison_enabled is True

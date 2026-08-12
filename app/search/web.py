@@ -29,6 +29,7 @@ _STATIC_CSS = Path(__file__).with_name("static") / "search.css"
 @dataclass(frozen=True)
 class CatalogPulse:
     public_stores: int = 0
+    personal_sources: int = 0
     comparable_products: int = 0
     fresh_offers: int = 0
 
@@ -117,6 +118,14 @@ def _opportunity_class(score: float | None) -> str:
     return ""
 
 
+def _price_context_label(offer) -> str:
+    if offer.price_type == "MEMBER":
+        return "Precio socio"
+    if offer.price_type == "SALE":
+        return "Oferta"
+    return "Precio público"
+
+
 def _result_html(result: SearchResult) -> str:
     meta: list[str] = []
     if result.brand:
@@ -173,10 +182,15 @@ def _result_html(result: SearchResult) -> str:
             else ""
         )
         best_badge = '<span class="best-label">Mejor precio</span>' if best else ""
+        context_badge = (
+            f'<span class="context-label member">{_price_context_label(offer)}</span>'
+            if offer.price_type == "MEMBER"
+            else (f'<span class="context-label">{_price_context_label(offer)}</span>' if result.price_mode == "personal" else "")
+        )
         offers.append(
             f"""<div class="offer{best}">
 <div class="offer-rank">{index}</div>
-<div class="offer-copy"><div class="offer-store"><strong>{html.escape(offer.store_name)}</strong>{best_badge}</div>
+<div class="offer-copy"><div class="offer-store"><strong>{html.escape(offer.store_name)}</strong>{best_badge}{context_badge}</div>
 <p>{html.escape(offer.product_name)}</p>
 <small>Actualizado {html.escape(format_datetime_cl(offer.last_seen_at))}</small></div>
 <div class="offer-price">{regular}<strong>{format_clp(offer.price)}</strong>
@@ -186,7 +200,12 @@ def _result_html(result: SearchResult) -> str:
 
     store_count = len(result.offers)
     stores_label = "1 tienda" if store_count == 1 else f"{store_count} tiendas"
+    if result.price_mode == "personal" and result.personal_advantage_clp > 0:
+        stats.insert(0, '<div class="insight personal-insight"><span>Ahorro por membresía</span>'
+            f'<strong>{format_clp(result.personal_advantage_clp)}</strong>'
+            f'<small>{result.personal_advantage_pct * 100:.1f}% vs mejor precio público</small></div>')
     insights_html = f'<div class="insights">{"".join(stats)}</div>' if stats else ""
+    winner_label = "Mejor precio para ti" if result.price_mode == "personal" else "Mejor precio público"
 
     return f"""<article class="result-card">
 <div class="result-topline"><div class="badges">{''.join(badges)}</div><span class="store-count">{stores_label}</span></div>
@@ -196,7 +215,7 @@ def _result_html(result: SearchResult) -> str:
     <div class="meta">{''.join(meta)}</div>
   </div>
   <div class="winner">
-    <span>Mejor precio público</span>
+    <span>{winner_label}</span>
     <strong>{format_clp(result.winner.price)}</strong>
     <small>{html.escape(result.winner.store_name)}</small>
   </div>
@@ -207,27 +226,28 @@ def _result_html(result: SearchResult) -> str:
 </article>"""
 
 
-def _pulse_html(pulse: CatalogPulse | None, max_age_hours: int) -> str:
+def _pulse_html(pulse: CatalogPulse | None, max_age_hours: int, price_mode: str = "public") -> str:
     if pulse is None:
         return ""
     return f"""<section class="pulse" aria-label="Estado del catálogo">
 <div><strong>{_format_count(pulse.public_stores)}</strong><span>tiendas públicas</span></div>
+<div><strong>{_format_count(pulse.personal_sources)}</strong><span>fuentes personales</span></div>
 <div><strong>{_format_count(pulse.comparable_products)}</strong><span>productos comparables</span></div>
 <div><strong>{_format_count(pulse.fresh_offers)}</strong><span>precios vigentes</span></div>
-<div><strong>{max_age_hours} h</strong><span>ventana de frescura</span></div>
 </section>"""
 
 
-def _empty_home_html(pulse: CatalogPulse | None, max_age_hours: int) -> str:
+def _empty_home_html(pulse: CatalogPulse | None, max_age_hours: int, price_mode: str = "public") -> str:
+    mode_query = "&mode=personal" if price_mode == "personal" else ""
     return f"""
-{_pulse_html(pulse, max_age_hours)}
+{_pulse_html(pulse, max_age_hours, price_mode)}
 <section class="quick-section">
   <div class="section-heading"><div><span class="eyebrow">Búsquedas rápidas</span><h2>Prueba el comparador</h2></div><p>Nombre, marca, variante y volumen funcionan juntos.</p></div>
   <div class="quick-links">
-    <a href="/buscar?q=johnnie+black+750">Johnnie Black 750</a>
-    <a href="/buscar?q=jack+honey">Jack Honey</a>
-    <a href="/buscar?q=mistral+35+1+litro">Mistral 35° 1 litro</a>
-    <a href="/buscar?q=gin+700">Gin 700 ml</a>
+    <a href="/buscar?q=johnnie+black+750{mode_query}">Johnnie Black 750</a>
+    <a href="/buscar?q=jack+honey{mode_query}">Jack Honey</a>
+    <a href="/buscar?q=mistral+35+1+litro{mode_query}">Mistral 35° 1 litro</a>
+    <a href="/buscar?q=gin+700{mode_query}">Gin 700 ml</a>
   </div>
 </section>
 <section class="feature-grid">
@@ -244,6 +264,7 @@ def _search_html(
     max_age_hours: int,
     pulse: CatalogPulse | None = None,
     error: str | None = None,
+    price_mode: str = "public",
 ) -> bytes:
     error_html = f'<div class="error" role="alert">{html.escape(error)}</div>' if error else ""
     content = ""
@@ -253,15 +274,19 @@ def _search_html(
     elif query:
         noun = "coincidencia" if len(results) == 1 else "coincidencias"
         content = f"""<div class="results-summary"><div><strong>{len(results)}</strong> {noun} para <span>“{html.escape(query)}”</span></div>
-<small>Mercado público · precios observados en las últimas {max_age_hours} h</small></div>
+<small>{'Con membresía CAV' if price_mode == 'personal' else 'Mercado público'} · precios observados en las últimas {max_age_hours} h</small></div>
 <section class="results">{''.join(_result_html(item) for item in results)}</section>"""
     else:
-        content = _empty_home_html(pulse, max_age_hours)
+        content = _empty_home_html(pulse, max_age_hours, price_mode)
 
+    personal_active = price_mode == "personal"
+    mode_hidden = '<input type="hidden" name="mode" value="personal">' if personal_active else ''
+    public_href = "/buscar" + (("?q=" + urlencode({"q": query})[2:]) if query else "")
+    personal_href = "/buscar?" + urlencode({"q": query, "mode": "personal"}) if query else "/buscar?mode=personal"
     body = f"""
 <nav class="topbar">
   <a class="brand" href="/buscar" aria-label="Monitor de Licores, inicio">{_brand_mark()}<span><strong>Monitor de Licores</strong><small>Catálogo unificado · v{APP_VERSION}</small></span></a>
-  <div class="top-actions"><span class="market-pill"><i></i> Mercado público</span><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></div>
+  <div class="top-actions"><div class="mode-switch"><a class="{'active' if not personal_active else ''}" href="{public_href}">Mercado público</a><a class="{'active personal' if personal_active else ''}" href="{personal_href}">Con membresía CAV</a></div><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></div>
 </nav>
 <header class="hero">
   <div class="hero-copy">
@@ -272,12 +297,13 @@ def _search_html(
 </header>
 <form class="searchbar" method="get" action="/buscar" role="search">
   <span class="search-icon" aria-hidden="true">⌕</span>
+  {mode_hidden}
   <input name="q" value="{html.escape(query, quote=True)}" placeholder="Ej: Johnnie Walker Black 750 ml" maxlength="120" aria-label="Buscar producto" autofocus>
   <button type="submit">Buscar <span aria-hidden="true">→</span></button>
 </form>
 {error_html}
 {content}
-<footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>Solo se comparan precios públicos y vigentes.</span></footer>"""
+<footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>{'Incluye precios socio elegibles; el mercado público sigue separado.' if personal_active else 'Solo se comparan precios públicos y vigentes.'}</span></footer>"""
     return _page("Buscar precios · Monitor de Licores", body)
 
 
@@ -289,6 +315,9 @@ class SearchApplication:
         self.access_token = os.getenv("SEARCH_ACCESS_TOKEN", "").strip()
         self.result_limit = _positive_int("SEARCH_RESULT_LIMIT", 8, maximum=30)
         self.max_age_hours = _positive_int("SEARCH_MAX_AGE_HOURS", 72, maximum=24 * 30)
+        self.personal_price_audiences = tuple(
+            value.strip().casefold() for value in os.getenv("PERSONAL_PRICE_AUDIENCES", "cav_member").split(",") if value.strip()
+        )
         self.engine, self.SessionLocal = create_database(database_url)
 
     def token_matches(self, value: str | None) -> bool:
@@ -306,7 +335,7 @@ class SearchApplication:
         return self.token_matches(cookie_token.value if cookie_token else None) or self.token_matches(header_token)
 
     def search(
-        self, query: str, *, limit: int | None = None, offset: int = 0
+        self, query: str, *, limit: int | None = None, offset: int = 0, price_mode: str = "public"
     ) -> list[SearchResult]:
         with self.SessionLocal() as session:
             return search_products(
@@ -315,6 +344,8 @@ class SearchApplication:
                 limit=limit or self.result_limit,
                 offset=offset,
                 max_age_hours=self.max_age_hours,
+                price_mode=price_mode,
+                eligible_audiences=self.personal_price_audiences,
             )
 
     def catalog_pulse(self) -> CatalogPulse:
@@ -326,6 +357,11 @@ class SearchApplication:
             )
             public_stores = int(
                 session.scalar(select(func.count(Store.id)).where(*public_filter)) or 0
+            )
+            personal_sources = int(
+                session.scalar(select(func.count(Store.id)).where(
+                    Store.is_active.is_(True), Store.personal_comparison_enabled.is_(True)
+                )) or 0
             )
             product_filter = (
                 *public_filter,
@@ -351,13 +387,14 @@ class SearchApplication:
             )
         return CatalogPulse(
             public_stores=public_stores,
+            personal_sources=personal_sources,
             comparable_products=comparable_products,
             fresh_offers=fresh_offers,
         )
 
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/5.5.3"
+    server_version = "LiquorSearch/5.6.0"
 
     @property
     def app(self) -> SearchApplication:
@@ -447,12 +484,13 @@ class SearchHandler(BaseHTTPRequestHandler):
             if not self._require_auth():
                 return
             query = " ".join(query_args.get("q", [""])[0].split())[:120]
+            price_mode = "personal" if query_args.get("mode", ["public"])[0].casefold() == "personal" else "public"
             error = None
             results: list[SearchResult] = []
             pulse: CatalogPulse | None = None
             try:
                 if query:
-                    results = self.app.search(query)
+                    results = self.app.search(query, price_mode=price_mode)
                 else:
                     pulse = self.app.catalog_pulse()
             except Exception as exc:
@@ -469,6 +507,7 @@ class SearchHandler(BaseHTTPRequestHandler):
                     max_age_hours=self.app.max_age_hours,
                     pulse=pulse,
                     error=error,
+                    price_mode=price_mode,
                 ),
             )
             return
@@ -481,10 +520,12 @@ class SearchHandler(BaseHTTPRequestHandler):
                 raw_limit = int(query_args.get("limit", [str(self.app.result_limit)])[0])
             except ValueError:
                 raw_limit = self.app.result_limit
-            results = self.app.search(query, limit=max(1, min(raw_limit, 20))) if len(query) >= 2 else []
+            price_mode = "personal" if query_args.get("mode", ["public"])[0].casefold() == "personal" else "public"
+            results = self.app.search(query, limit=max(1, min(raw_limit, 20)), price_mode=price_mode) if len(query) >= 2 else []
             payload = {
                 "query": query,
                 "count": len(results),
+                "mode": price_mode,
                 "results": [result_to_dict(result) for result in results],
             }
             self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"), content_type="application/json; charset=utf-8")

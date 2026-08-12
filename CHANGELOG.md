@@ -1,3 +1,17 @@
+# v5.6.0 — Personal Pricing & CAV Activation
+
+- Activa CAV como fuente personal estable tras tres ciclos de validación de v5.5.2.
+- Mantiene CAV fuera del mercado público mediante `comparison_enabled=false`.
+- Añade `personal_comparison_enabled` para fuentes elegibles solo en el perfil privado.
+- El buscador web alterna entre Mercado público y Con membresía CAV.
+- El API `/api/search` acepta `mode=personal`.
+- Añade historial contextual por producto, `price_type` y `audience_key`.
+- Opportunity Score personal deja el modo preview y usa historia, matching, frescura y escasez reales.
+- Añade alertas Telegram por bajas MEMBER y un digest deduplicado de ventajas CAV frente al mercado público.
+- Añade `/miprecio <producto>`, `/personal` y `/historialsocio <producto>`.
+- Migración Alembic `0010_personal_pricing_activation`.
+- Suite total: 165 pruebas.
+
 # v5.5.3 — Search UI Refresh
 
 - Rediseña el buscador web como comparador de precios, sin modificar collectors ni persistencia.

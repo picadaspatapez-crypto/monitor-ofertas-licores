@@ -1,27 +1,94 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.intelligence.opportunity import OpportunityComponents, classify_opportunity, opportunity_score
-from app.models import PersonalOpportunitySnapshot, Product, ProductMatch, ProductPriceQuote, Store
+from app.models import (
+    MasterProduct,
+    PersonalOpportunitySnapshot,
+    PriceContextStatistic,
+    Product,
+    ProductMatch,
+    ProductPriceQuote,
+    Store,
+)
 from app.repositories.common import utcnow
 
 
-def _best_quote(rows: list[ProductPriceQuote]) -> ProductPriceQuote | None:
-    active = [row for row in rows if row.is_active and row.price > 0]
-    if not active:
+def _normalized_audiences(values) -> set[str]:
+    return {str(value).strip().casefold() for value in values or () if str(value).strip()}
+
+
+def _quote_allowed(quote: ProductPriceQuote, eligible_audiences: set[str]) -> bool:
+    if not quote.is_active or quote.price <= 0:
+        return False
+    if not quote.eligibility_required:
+        return True
+    return quote.audience_key.casefold() in eligible_audiences
+
+
+def _best_quote(
+    rows: list[ProductPriceQuote], *, eligible_audiences: set[str]
+) -> ProductPriceQuote | None:
+    allowed = [row for row in rows if _quote_allowed(row, eligible_audiences)]
+    if not allowed:
         return None
-    # Para el perfil personal se admiten MEMBER y promociones públicas. CARD_PROMO
-    # y COUPON quedan modelados, pero no se activan sin una elegibilidad configurada.
-    allowed = [row for row in active if row.price_type in {"PUBLIC", "SALE", "MEMBER"}]
-    return min(allowed, key=lambda row: (row.price, row.eligibility_required, row.price_type)) if allowed else None
+    priority = {"MEMBER": 0, "SALE": 1, "PUBLIC": 2, "CARD_PROMO": 3, "COUPON": 4}
+    return min(
+        allowed,
+        key=lambda row: (
+            int(row.price),
+            priority.get(row.price_type, 9),
+            row.audience_key.casefold(),
+        ),
+    )
 
 
-def refresh_personal_opportunities(session: Session) -> int:
-    """Vista personal separada; nunca modifica el comparador público ni sus alertas."""
+def _history_position(current: int, stats: PriceContextStatistic | None) -> float:
+    if stats is None or not stats.avg_90d or stats.avg_90d <= 0:
+        return 0.5
+    average = float(stats.avg_90d)
+    delta = (average - current) / average
+    score = 0.5 + delta / 0.30
+    if stats.min_90d and current <= stats.min_90d:
+        score = max(score, 1.0)
+    return max(0.0, min(1.0, score))
+
+
+def _freshness(product: Product, now: datetime) -> float:
+    seen = product.last_seen_at
+    if seen is None:
+        return 0.0
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    age_h = max(0.0, (now - seen).total_seconds() / 3600)
+    if age_h <= 6:
+        return 1.0
+    if age_h <= 24:
+        return 0.9
+    if age_h <= 72:
+        return 0.7
+    return 0.4
+
+
+def refresh_personal_opportunities(
+    session: Session,
+    *,
+    eligible_audiences: tuple[str, ...] | list[str] | set[str] = ("cav_member",),
+) -> int:
+    """Calcula el comparador personal sin modificar el mercado público.
+
+    Las tiendas públicas siempre participan. Fuentes como CAV participan cuando
+    ``personal_comparison_enabled`` está activo. Los precios que requieren
+    elegibilidad solo se usan si su ``audience_key`` está configurado para el
+    perfil personal.
+    """
+    eligible = _normalized_audiences(eligible_audiences)
     rows = session.execute(
         select(Product, Store, ProductMatch, ProductPriceQuote)
         .join(Store, Store.id == Product.store_id)
@@ -36,11 +103,19 @@ def refresh_personal_opportunities(session: Session) -> int:
     )
     grouped: dict[int, dict[int, tuple[Product, Store, ProductMatch | None, list[ProductPriceQuote]]]] = defaultdict(dict)
     for product, store, match, quote in rows:
+        if not (store.comparison_enabled or store.personal_comparison_enabled):
+            continue
         master_id = int(product.master_product_id)
         pid = int(product.id)
         if pid not in grouped[master_id]:
             grouped[master_id][pid] = (product, store, match, [])
         grouped[master_id][pid][3].append(quote)
+
+    stat_rows = list(session.scalars(select(PriceContextStatistic)))
+    stats = {
+        (int(row.product_id), row.price_type, row.audience_key): row
+        for row in stat_rows
+    }
 
     now = utcnow()
     active_ids: set[int] = set()
@@ -48,36 +123,47 @@ def refresh_personal_opportunities(session: Session) -> int:
     for master_id, by_product in grouped.items():
         offers = []
         for product, store, match, quotes in by_product.values():
-            quote = _best_quote(quotes)
+            quote = _best_quote(quotes, eligible_audiences=eligible)
             if quote is None:
                 continue
-            # Tiendas diagnósticas solo pueden entrar mediante un precio MEMBER;
-            # su precio normal no altera esta vista ni el comparador público.
-            if store.diagnostic_mode and quote.price_type != "MEMBER":
-                member_quotes = [q for q in quotes if q.is_active and q.price_type == "MEMBER" and q.price > 0]
-                if not member_quotes:
-                    continue
-                quote = min(member_quotes, key=lambda q: q.price)
             confidence = float(match.confidence) if match is not None else 1.0
             offers.append((int(quote.price), product, store, quote, confidence))
         if len(offers) < 2:
             continue
+
         offers.sort(key=lambda item: (item[0], item[2].name.casefold()))
-        winner, runner = offers[0], offers[1]
+        winner = offers[0]
+        runner = offers[1]
         saving = max(0, runner[0] - winner[0])
         saving_pct = saving / runner[0] if runner[0] else 0.0
-        # Preview personal: usa señal de mercado, matching y disponibilidad; el
-        # histórico público sigue siendo la referencia consolidada de v5.4.
-        score = opportunity_score(OpportunityComponents(
-            market_saving=min(1.0, saving_pct / 0.30),
-            history_position=0.5,
-            match_confidence=min(winner[4], runner[4]),
-            freshness=1.0,
-            scarcity=max(0.0, min(1.0, (7 - len(offers)) / 5)),
-        ))
+
+        public_offers = [item for item in offers if item[2].comparison_enabled]
+        public_reference = min((item[0] for item in public_offers), default=None)
+        advantage = max(0, (public_reference or winner[0]) - winner[0]) if public_reference else 0
+        advantage_pct = advantage / public_reference if public_reference else 0.0
+
+        winner_stats = stats.get((int(winner[1].id), winner[3].price_type, winner[3].audience_key))
+        history = _history_position(winner[0], winner_stats)
+        confidence = min(winner[4], runner[4])
+        freshness = min(_freshness(winner[1], now), _freshness(runner[1], now))
+        scarcity = max(0.0, min(1.0, (7 - len(offers)) / 5))
+        score = opportunity_score(
+            OpportunityComponents(
+                market_saving=min(1.0, saving_pct / 0.30),
+                history_position=history,
+                match_confidence=confidence,
+                freshness=freshness,
+                scarcity=scarcity,
+            )
+        )
+
         row = session.get(PersonalOpportunitySnapshot, master_id)
         if row is None:
-            row = PersonalOpportunitySnapshot(master_product_id=master_id, score=score, classification=classify_opportunity(score))
+            row = PersonalOpportunitySnapshot(
+                master_product_id=master_id,
+                score=score,
+                classification=classify_opportunity(score),
+            )
             session.add(row)
         row.score = score
         row.classification = classify_opportunity(score)
@@ -88,23 +174,32 @@ def refresh_personal_opportunities(session: Session) -> int:
         row.winner_audience_key = winner[3].audience_key
         row.saving_clp = saving
         row.saving_pct = saving_pct
+        row.public_reference_price = public_reference
+        row.personal_advantage_clp = advantage
+        row.personal_advantage_pct = advantage_pct
+        row.history_position = history
+        row.match_confidence = confidence
+        row.freshness_score = freshness
+        row.scarcity_score = scarcity
         row.calculated_at = now
         active_ids.add(master_id)
         updated += 1
 
     if active_ids:
-        session.execute(delete(PersonalOpportunitySnapshot).where(PersonalOpportunitySnapshot.master_product_id.not_in(active_ids)))
+        session.execute(
+            delete(PersonalOpportunitySnapshot).where(
+                PersonalOpportunitySnapshot.master_product_id.not_in(active_ids)
+            )
+        )
     else:
         session.execute(delete(PersonalOpportunitySnapshot))
     session.flush()
     return updated
 
-from dataclasses import dataclass
-from app.models import MasterProduct
-
 
 @dataclass(frozen=True)
 class PersonalOpportunityView:
+    master_product_id: int
     canonical_name: str
     score: float
     classification: str
@@ -114,21 +209,39 @@ class PersonalOpportunityView:
     audience_key: str
     saving_clp: int
     saving_pct: float
+    public_reference_price: int | None
+    personal_advantage_clp: int
+    personal_advantage_pct: float
+    history_position: float
     url: str
 
 
-def top_personal_opportunities(session: Session, *, limit: int = 20) -> list[PersonalOpportunityView]:
+def top_personal_opportunities(
+    session: Session,
+    *,
+    limit: int = 20,
+    minimum_score: float = 0.0,
+) -> list[PersonalOpportunityView]:
     statement = (
         select(PersonalOpportunitySnapshot, MasterProduct, Product, Store)
         .join(MasterProduct, MasterProduct.id == PersonalOpportunitySnapshot.master_product_id)
         .join(Product, Product.id == PersonalOpportunitySnapshot.winner_product_id)
         .join(Store, Store.id == PersonalOpportunitySnapshot.winner_store_id)
-        .where(Product.is_available.is_(True), Store.is_active.is_(True))
-        .order_by(PersonalOpportunitySnapshot.score.desc(), PersonalOpportunitySnapshot.saving_pct.desc())
+        .where(
+            Product.is_available.is_(True),
+            Store.is_active.is_(True),
+            PersonalOpportunitySnapshot.score >= float(minimum_score),
+        )
+        .order_by(
+            PersonalOpportunitySnapshot.score.desc(),
+            PersonalOpportunitySnapshot.personal_advantage_pct.desc(),
+            PersonalOpportunitySnapshot.saving_pct.desc(),
+        )
         .limit(max(1, min(int(limit), 30)))
     )
     return [
         PersonalOpportunityView(
+            master_product_id=int(master.id),
             canonical_name=master.canonical_name,
             score=float(snapshot.score),
             classification=snapshot.classification,
@@ -138,6 +251,14 @@ def top_personal_opportunities(session: Session, *, limit: int = 20) -> list[Per
             audience_key=snapshot.winner_audience_key,
             saving_clp=int(snapshot.saving_clp or 0),
             saving_pct=float(snapshot.saving_pct or 0.0),
+            public_reference_price=(
+                int(snapshot.public_reference_price)
+                if snapshot.public_reference_price is not None
+                else None
+            ),
+            personal_advantage_clp=int(snapshot.personal_advantage_clp or 0),
+            personal_advantage_pct=float(snapshot.personal_advantage_pct or 0.0),
+            history_position=float(snapshot.history_position or 0.5),
             url=product.url,
         )
         for snapshot, master, product, store in session.execute(statement)

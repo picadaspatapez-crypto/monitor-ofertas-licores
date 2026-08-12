@@ -25,6 +25,8 @@ from app.telegram_bot.formatting import (
     format_history_result,
     format_opportunities,
     history_help_message,
+    personal_history_help_message,
+    format_personal_history_result,
     favorite_help_message,
     favorite_target_help_message,
     format_favorite_deleted,
@@ -33,6 +35,7 @@ from app.telegram_bot.formatting import (
     format_favorites_list,
     format_search_results,
     help_message,
+    no_results_message,
     search_help_message,
     status_message,
     StoreStatusView,
@@ -73,12 +76,15 @@ class TelegramSearchBot:
     def _authorized(self, chat_id: int) -> bool:
         return chat_id in self.settings.allowed_chat_ids
 
-    def _search_catalog(self, query: str, *, limit: int, offset: int = 0):
+    def _search_catalog(self, query: str, *, limit: int, offset: int = 0, price_mode: str = "public"):
         try:
-            return self.application.search(query, limit=limit, offset=offset)
+            return self.application.search(query, limit=limit, offset=offset, price_mode=price_mode)
         except TypeError as exc:
             # Compatibilidad con implementaciones antiguas y dobles de prueba.
-            if "offset" not in str(exc) or offset:
+            message = str(exc)
+            if price_mode != "public" and "price_mode" in message:
+                return self.application.search(query, limit=limit, offset=offset)
+            if "offset" not in message or offset:
                 raise
             return self.application.search(query, limit=limit)
 
@@ -216,6 +222,13 @@ class TelegramSearchBot:
                 text=history_help_message(),
             )
             return
+        if command.name == "personal_history_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=personal_history_help_message(),
+            )
+            return
         if command.name == "status":
             active, fresh, latest, favorites, stores = self._catalog_status(chat_id)
             self._send(
@@ -264,23 +277,47 @@ class TelegramSearchBot:
                 chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup
             )
             return
+        if command.name == "personal_search":
+            try:
+                results = self._search_catalog(command.query, limit=self.settings.page_size, price_mode="personal")
+                text, markup = format_search_results(
+                    command.query, results, page=0, page_size=self.settings.page_size, has_more=False
+                ) if results else (no_results_message(command.query), None)
+                text = "🟣 <b>Comparador personal</b>\nIncluye tu precio socio CAV cuando corresponde.\n\n" + text
+            except Exception as exc:
+                print(f"BOT personal search error ({type(exc).__name__}: {exc}).", flush=True)
+                text, markup = "⚠️ No pude consultar el comparador personal.", None
+            self._send(chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup)
+            return
+        if command.name == "personal_history":
+            try:
+                results = self._search_catalog(command.query, limit=1, price_mode="personal")
+                text = format_personal_history_result(command.query, results[0] if results else None)
+            except Exception as exc:
+                print(f"BOT personal history error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar el historial personal en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
         if command.name == "personal_opportunities":
             try:
                 with self.application.SessionLocal() as session:
                     views = top_personal_opportunities(session, limit=20)
                 if not views:
-                    text = "🧪 Vista personal: todavía no hay suficientes coincidencias contextuales."
+                    text = "🟣 Comparador personal: todavía no hay suficientes coincidencias contextuales."
                 else:
-                    lines = ["🧪 Vista personal · preview", "", "Incluye precios de socio CAV sin modificar el comparador público.", ""]
+                    lines = ["🟣 Oportunidades personales", "", "Incluye tu precio socio CAV sin modificar el comparador público.", ""]
                     for index, view in enumerate(views, start=1):
                         context = "socio" if view.price_type == "MEMBER" else view.price_type.casefold()
                         lines.extend([
                             f"{index}. {view.canonical_name}",
                             f"   {view.winner_store}: ${view.winner_price:,} ({context})".replace(",", "."),
-                            f"   Ahorro: ${view.saving_clp:,} · {view.saving_pct:.1%} · score {view.score:.0f}".replace(",", "."),
-                            view.url,
-                            "",
+                            f"   Ahorro vs 2ª opción: ${view.saving_clp:,} · {view.saving_pct:.1%} · score {view.score:.0f}".replace(",", "."),
                         ])
+                        if view.personal_advantage_clp > 0:
+                            lines.append(
+                                f"   Ventaja vs mercado público: ${view.personal_advantage_clp:,} · {view.personal_advantage_pct:.1%}".replace(",", ".")
+                            )
+                        lines.extend([view.url, ""])
                     text = "\n".join(lines).strip()
             except Exception as exc:
                 print(f"BOT personal opportunities error ({type(exc).__name__}: {exc}).", flush=True)
