@@ -1,23 +1,27 @@
-v5.5.2 — PAGINATION BOUNDARY & CAV SHARDED CATALOG HOTFIX
-==========================================================
+v5.5.3 — Search UI Refresh
 
-BASE OBLIGATORIA: v5.5.1.
+BASE REQUERIDA
+v5.5.2 — Pagination Boundary & CAV Sharded Catalog Hotfix
 
-Corrige:
-- La Vinoteca: la cola repetida posterior al catálogo VTEX pasa a ser una señal terminal segura.
-- La Vinoteca: se leen también REST-Content-Range / X-VTEX-Content-Range.
-- CAV: deja de consultar el índice global cercano al límite de ~1000 resultados.
-- CAV: se divide por familias y por tipos de vino para obtener cobertura completa por shards.
-- CAV: una cola editorial repetida al final de cada shard se interpreta como fin natural, no como fallo.
+QUÉ HACE
+Actualiza la interfaz web del buscador/comparador. No modifica collectors,
+matching, scheduler, Telegram ni base de datos.
 
-CAV SIGUE EN DIAGNÓSTICO y NO modifica el comparador público.
-NO HAY MIGRACIONES NUEVAS. Alembic permanece en 0009_price_contexts.
-
-Aplicación:
-1. Copia el CONTENIDO de este hotfix sobre la raíz de v5.5.1.
-2. Reemplaza archivos.
+APLICACIÓN
+1. Copia TODO el contenido interior de esta carpeta sobre la raíz de v5.5.2.
+2. Reemplaza los archivos existentes respetando las rutas.
 3. Commit + push.
-4. Espera deploy exitoso en Railway.
-5. Ejecuta un único Run now de validación.
+4. Espera el deployment de Railway.
+5. Abre /buscar y usa Ctrl+F5 si el navegador conserva el CSS anterior.
 
-Lee DEPLOY_V5.5.2.md antes del deploy.
+NO REQUIERE
+- Run now del collector.
+- Variables nuevas.
+- Migración Alembic.
+
+ALEMBIC
+Debe seguir en 0009_price_contexts.
+
+ROLLBACK
+Restaura app/search/web.py, app/search/static/search.css y app/version.py desde v5.5.2.
+No hay rollback de base de datos.

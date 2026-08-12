@@ -4,6 +4,8 @@ import hmac
 import html
 import json
 import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,9 +13,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 
 from app.database import create_database
+from app.models import Product, Store
 from app.search.engine import SearchResult, search_products
 from app.search.formatting import format_clp, format_datetime_cl, result_to_dict
 from app.version import APP_VERSION, RELEASE_NAME
@@ -21,6 +24,13 @@ from app.version import APP_VERSION, RELEASE_NAME
 
 _COOKIE_NAME = "liquor_search_access"
 _STATIC_CSS = Path(__file__).with_name("static") / "search.css"
+
+
+@dataclass(frozen=True)
+class CatalogPulse:
+    public_stores: int = 0
+    comparable_products: int = 0
+    fresh_offers: int = 0
 
 
 def _positive_int(name: str, default: int, *, maximum: int | None = None) -> int:
@@ -33,109 +43,198 @@ def _positive_int(name: str, default: int, *, maximum: int | None = None) -> int
     return min(value, maximum) if maximum is not None else value
 
 
+def _format_count(value: int) -> str:
+    return f"{int(value):,}".replace(",", ".")
+
+
 def _page(title: str, body: str) -> bytes:
     document = f"""<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0f15">
   <title>{html.escape(title)}</title>
   <link rel="stylesheet" href="/static/search.css">
 </head>
-<body><main class="shell">{body}</main></body>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <main class="shell">{body}</main>
+</body>
 </html>"""
     return document.encode("utf-8")
 
 
+def _brand_mark() -> str:
+    return """<div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>"""
+
+
 def _login_html(*, error: str | None = None, next_path: str = "/buscar") -> bytes:
-    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
+    error_html = f'<div class="error" role="alert">{html.escape(error)}</div>' if error else ""
     body = f"""
-<section class="panel compact">
-  <div class="eyebrow">Monitor de Licores · v{APP_VERSION}</div>
-  <h1>Acceso al buscador</h1>
-  <p>Ingresa la clave privada configurada en Railway.</p>
-  {error_html}
-  <form method="post" action="/acceso" class="stack">
-    <input type="hidden" name="next" value="{html.escape(next_path, quote=True)}">
-    <label for="token">Clave de acceso</label>
-    <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
-    <button type="submit">Entrar</button>
-  </form>
+<section class="auth-wrap">
+  <div class="auth-brand">{_brand_mark()}<div><strong>Monitor de Licores</strong><span>Comparador privado</span></div></div>
+  <section class="panel compact">
+    <div class="eyebrow">Acceso privado · v{APP_VERSION}</div>
+    <h1 class="auth-title">Entra a tu catálogo</h1>
+    <p>Usa la clave privada configurada en Railway para acceder al buscador.</p>
+    {error_html}
+    <form method="post" action="/acceso" class="stack">
+      <input type="hidden" name="next" value="{html.escape(next_path, quote=True)}">
+      <label for="token">Clave de acceso</label>
+      <input id="token" name="token" type="password" autocomplete="current-password" required autofocus placeholder="••••••••••••">
+      <button type="submit">Entrar al comparador</button>
+    </form>
+  </section>
 </section>"""
-    return _page("Acceso al buscador", body)
+    return _page("Acceso · Monitor de Licores", body)
 
 
 def _setup_html() -> bytes:
     body = f"""
-<section class="panel compact">
-  <div class="eyebrow">Monitor de Licores · v{APP_VERSION}</div>
-  <h1>Configuración pendiente</h1>
-  <p>Agrega la variable <code>SEARCH_ACCESS_TOKEN</code> al servicio web de Railway y vuelve a desplegarlo.</p>
-  <p class="muted">El scraper cron puede seguir funcionando con normalidad.</p>
+<section class="auth-wrap">
+  <div class="auth-brand">{_brand_mark()}<div><strong>Monitor de Licores</strong><span>Comparador privado</span></div></div>
+  <section class="panel compact">
+    <div class="eyebrow">Configuración · v{APP_VERSION}</div>
+    <h1 class="auth-title">Falta una variable</h1>
+    <p>Agrega <code>SEARCH_ACCESS_TOKEN</code> al servicio web de Railway y vuelve a desplegarlo.</p>
+    <p class="muted">Los collectors y el cron pueden seguir funcionando con normalidad.</p>
+  </section>
 </section>"""
     return _page("Configuración pendiente", body)
+
+
+def _opportunity_class(score: float | None) -> str:
+    if score is None:
+        return ""
+    if score >= 90:
+        return " opportunity-excellent"
+    if score >= 80:
+        return " opportunity-great"
+    if score >= 70:
+        return " opportunity-good"
+    return ""
 
 
 def _result_html(result: SearchResult) -> str:
     meta: list[str] = []
     if result.brand:
         meta.append(f"<span>{html.escape(result.brand)}</span>")
+    if result.variant:
+        meta.append(f"<span>{html.escape(result.variant)}</span>")
     if result.volume_ml:
         meta.append(f"<span>{result.volume_ml} ml</span>")
     if result.package_quantity > 1:
         meta.append(f"<span>Pack {result.package_quantity}</span>")
 
-    intelligence = ""
-    intelligence_parts: list[str] = []
+    badges = [f'<span class="badge badge-match">Coincidencia {result.score * 100:.0f}%</span>']
     if result.opportunity_score is not None:
-        intelligence_parts.append(
-            f"Opportunity Score <strong>{result.opportunity_score:.0f}/100</strong> "
-            f"· {html.escape(result.opportunity_classification or '')}"
+        classification = html.escape(result.opportunity_classification or "Oportunidad")
+        badges.append(
+            f'<span class="badge badge-opportunity{_opportunity_class(result.opportunity_score)}">'
+            f'{result.opportunity_score:.0f}/100 · {classification}</span>'
+        )
+
+    stats: list[str] = []
+    if result.runner_up and result.saving_clp > 0:
+        stats.append(
+            '<div class="insight"><span>Ahorro vs. 2ª tienda</span>'
+            f'<strong>{format_clp(result.saving_clp)}</strong>'
+            f'<small>{result.saving_pct * 100:.1f}% menos</small></div>'
         )
     if result.avg_90d:
         delta = (result.winner.price - result.avg_90d) / result.avg_90d
-        intelligence_parts.append(
-            f"Promedio 90 días {format_clp(round(result.avg_90d))} · actual {delta:+.1%}"
+        delta_label = f"{abs(delta) * 100:.1f}% {'bajo' if delta <= 0 else 'sobre'} promedio"
+        stats.append(
+            '<div class="insight"><span>Promedio 90 días</span>'
+            f'<strong>{format_clp(round(result.avg_90d))}</strong>'
+            f'<small>{delta_label}</small></div>'
         )
     if result.min_90d:
-        intelligence_parts.append(f"Mínimo 90 días {format_clp(result.min_90d)}")
-    if intelligence_parts:
-        intelligence = '<div class="saving">' + " · ".join(intelligence_parts) + "</div>"
-
-    saving = ""
-    if result.runner_up and result.saving_clp > 0:
-        saving = (
-            '<div class="saving">Ahorro frente a la siguiente tienda: '
-            f"<strong>{format_clp(result.saving_clp)}</strong> "
-            f"({result.saving_pct * 100:.1f}%)</div>"
+        stats.append(
+            '<div class="insight"><span>Mínimo 90 días</span>'
+            f'<strong>{format_clp(result.min_90d)}</strong>'
+            '<small>historial reciente</small></div>'
+        )
+    elif result.historical_min:
+        stats.append(
+            '<div class="insight"><span>Mínimo histórico</span>'
+            f'<strong>{format_clp(result.historical_min)}</strong>'
+            '<small>desde el monitoreo</small></div>'
         )
 
     offers: list[str] = []
-    for offer in result.offers:
+    for index, offer in enumerate(result.offers, start=1):
         best = " best" if offer.product_id == result.winner.product_id else ""
         regular = (
-            f"<del>{format_clp(offer.regular_price)}</del>"
+            f'<del>{format_clp(offer.regular_price)}</del>'
             if offer.regular_price and offer.regular_price > offer.price
             else ""
         )
+        best_badge = '<span class="best-label">Mejor precio</span>' if best else ""
         offers.append(
             f"""<div class="offer{best}">
-<div><strong>{html.escape(offer.store_name)}</strong>
+<div class="offer-rank">{index}</div>
+<div class="offer-copy"><div class="offer-store"><strong>{html.escape(offer.store_name)}</strong>{best_badge}</div>
 <p>{html.escape(offer.product_name)}</p>
 <small>Actualizado {html.escape(format_datetime_cl(offer.last_seen_at))}</small></div>
 <div class="offer-price">{regular}<strong>{format_clp(offer.price)}</strong>
-<a href="{html.escape(offer.url, quote=True)}" target="_blank" rel="noopener noreferrer">Ver producto</a></div>
+<a class="store-link" href="{html.escape(offer.url, quote=True)}" target="_blank" rel="noopener noreferrer">Ver en tienda <span aria-hidden="true">↗</span></a></div>
 </div>"""
         )
 
+    store_count = len(result.offers)
+    stores_label = "1 tienda" if store_count == 1 else f"{store_count} tiendas"
+    insights_html = f'<div class="insights">{"".join(stats)}</div>' if stats else ""
+
     return f"""<article class="result-card">
-<div class="result-head"><div>
-<div class="score">Coincidencia {result.score * 100:.0f}%</div>
-<h2>{html.escape(result.canonical_name)}</h2>
-<div class="meta">{''.join(meta)}</div></div>
-<div class="winner"><span>Mejor precio</span><strong>{format_clp(result.winner.price)}</strong>
-<small>{html.escape(result.winner.store_name)}</small></div></div>
-{saving}{intelligence}<div class="offers">{''.join(offers)}</div></article>"""
+<div class="result-topline"><div class="badges">{''.join(badges)}</div><span class="store-count">{stores_label}</span></div>
+<div class="result-head">
+  <div class="result-title">
+    <h2>{html.escape(result.canonical_name)}</h2>
+    <div class="meta">{''.join(meta)}</div>
+  </div>
+  <div class="winner">
+    <span>Mejor precio público</span>
+    <strong>{format_clp(result.winner.price)}</strong>
+    <small>{html.escape(result.winner.store_name)}</small>
+  </div>
+</div>
+{insights_html}
+<div class="offers-head"><span>Comparación por tienda</span><span>De menor a mayor precio</span></div>
+<div class="offers">{''.join(offers)}</div>
+</article>"""
+
+
+def _pulse_html(pulse: CatalogPulse | None, max_age_hours: int) -> str:
+    if pulse is None:
+        return ""
+    return f"""<section class="pulse" aria-label="Estado del catálogo">
+<div><strong>{_format_count(pulse.public_stores)}</strong><span>tiendas públicas</span></div>
+<div><strong>{_format_count(pulse.comparable_products)}</strong><span>productos comparables</span></div>
+<div><strong>{_format_count(pulse.fresh_offers)}</strong><span>precios vigentes</span></div>
+<div><strong>{max_age_hours} h</strong><span>ventana de frescura</span></div>
+</section>"""
+
+
+def _empty_home_html(pulse: CatalogPulse | None, max_age_hours: int) -> str:
+    return f"""
+{_pulse_html(pulse, max_age_hours)}
+<section class="quick-section">
+  <div class="section-heading"><div><span class="eyebrow">Búsquedas rápidas</span><h2>Prueba el comparador</h2></div><p>Nombre, marca, variante y volumen funcionan juntos.</p></div>
+  <div class="quick-links">
+    <a href="/buscar?q=johnnie+black+750">Johnnie Black 750</a>
+    <a href="/buscar?q=jack+honey">Jack Honey</a>
+    <a href="/buscar?q=mistral+35+1+litro">Mistral 35° 1 litro</a>
+    <a href="/buscar?q=gin+700">Gin 700 ml</a>
+  </div>
+</section>
+<section class="feature-grid">
+  <article><span class="feature-number">01</span><h3>Compara tiendas</h3><p>Agrupa publicaciones equivalentes y ordena sus precios de menor a mayor.</p></article>
+  <article><span class="feature-number">02</span><h3>Mira el historial</h3><p>Contrasta el precio actual con mínimos y promedios observados por el monitor.</p></article>
+  <article><span class="feature-number">03</span><h3>Detecta oportunidades</h3><p>El Opportunity Score resume precio, historial, matching y frescura del catálogo.</p></article>
+</section>"""
 
 
 def _search_html(
@@ -143,25 +242,43 @@ def _search_html(
     query: str,
     results: list[SearchResult],
     max_age_hours: int,
+    pulse: CatalogPulse | None = None,
     error: str | None = None,
 ) -> bytes:
-    error_html = f'<div class="error">{html.escape(error)}</div>' if error else ""
-    empty = ""
+    error_html = f'<div class="error" role="alert">{html.escape(error)}</div>' if error else ""
+    content = ""
     if query and not results and not error:
-        empty = """<section class="empty"><h2>No encontré coincidencias</h2>
-<p>Prueba con menos palabras o sin indicar el volumen.</p></section>"""
+        content = """<section class="empty"><div class="empty-icon">⌕</div><h2>No encontré coincidencias</h2>
+<p>Prueba con menos palabras, otra variante del nombre o sin indicar el volumen.</p></section>"""
+    elif query:
+        noun = "coincidencia" if len(results) == 1 else "coincidencias"
+        content = f"""<div class="results-summary"><div><strong>{len(results)}</strong> {noun} para <span>“{html.escape(query)}”</span></div>
+<small>Mercado público · precios observados en las últimas {max_age_hours} h</small></div>
+<section class="results">{''.join(_result_html(item) for item in results)}</section>"""
+    else:
+        content = _empty_home_html(pulse, max_age_hours)
+
     body = f"""
-<header class="hero"><div>
-<div class="eyebrow">Catálogo unificado · v{APP_VERSION}</div>
-<h1>Busca una botella y compara precios</h1>
-<p>Prueba con “johnnie black 750”, “jack honey” o “mistral 35 1 litro”.</p>
-</div><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></header>
-<form class="searchbar" method="get" action="/buscar">
-<input name="q" value="{html.escape(query, quote=True)}" placeholder="Nombre, marca, variante o volumen" maxlength="120" autofocus>
-<button type="submit">Buscar</button></form>
-{error_html}{empty}<section class="results">{''.join(_result_html(item) for item in results)}</section>
-<footer>Solo se muestran precios observados durante las últimas {max_age_hours} horas.</footer>"""
-    return _page("Buscar precios", body)
+<nav class="topbar">
+  <a class="brand" href="/buscar" aria-label="Monitor de Licores, inicio">{_brand_mark()}<span><strong>Monitor de Licores</strong><small>Catálogo unificado · v{APP_VERSION}</small></span></a>
+  <div class="top-actions"><span class="market-pill"><i></i> Mercado público</span><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></div>
+</nav>
+<header class="hero">
+  <div class="hero-copy">
+    <div class="eyebrow">Comparador de precios · Chile</div>
+    <h1>Busca una botella.<br><span>Encuentra el mejor precio.</span></h1>
+    <p>Compara publicaciones equivalentes entre las tiendas monitoreadas, con historial y Opportunity Score.</p>
+  </div>
+</header>
+<form class="searchbar" method="get" action="/buscar" role="search">
+  <span class="search-icon" aria-hidden="true">⌕</span>
+  <input name="q" value="{html.escape(query, quote=True)}" placeholder="Ej: Johnnie Walker Black 750 ml" maxlength="120" aria-label="Buscar producto" autofocus>
+  <button type="submit">Buscar <span aria-hidden="true">→</span></button>
+</form>
+{error_html}
+{content}
+<footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>Solo se comparan precios públicos y vigentes.</span></footer>"""
+    return _page("Buscar precios · Monitor de Licores", body)
 
 
 class SearchApplication:
@@ -200,9 +317,47 @@ class SearchApplication:
                 max_age_hours=self.max_age_hours,
             )
 
+    def catalog_pulse(self) -> CatalogPulse:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.max_age_hours)
+        with self.SessionLocal() as session:
+            public_filter = (
+                Store.is_active.is_(True),
+                Store.comparison_enabled.is_(True),
+            )
+            public_stores = int(
+                session.scalar(select(func.count(Store.id)).where(*public_filter)) or 0
+            )
+            product_filter = (
+                *public_filter,
+                Product.is_available.is_(True),
+                Product.current_price > 0,
+                Product.last_seen_at >= cutoff,
+            )
+            fresh_offers = int(
+                session.scalar(
+                    select(func.count(Product.id))
+                    .join(Store, Product.store_id == Store.id)
+                    .where(*product_filter)
+                )
+                or 0
+            )
+            comparable_products = int(
+                session.scalar(
+                    select(func.count(func.distinct(Product.master_product_id)))
+                    .join(Store, Product.store_id == Store.id)
+                    .where(*product_filter, Product.master_product_id.is_not(None))
+                )
+                or 0
+            )
+        return CatalogPulse(
+            public_stores=public_stores,
+            comparable_products=comparable_products,
+            fresh_offers=fresh_offers,
+        )
+
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/5.4"
+    server_version = "LiquorSearch/5.5.3"
 
     @property
     def app(self) -> SearchApplication:
@@ -294,18 +449,25 @@ class SearchHandler(BaseHTTPRequestHandler):
             query = " ".join(query_args.get("q", [""])[0].split())[:120]
             error = None
             results: list[SearchResult] = []
-            if query:
-                try:
+            pulse: CatalogPulse | None = None
+            try:
+                if query:
                     results = self.app.search(query)
-                except Exception as exc:
+                else:
+                    pulse = self.app.catalog_pulse()
+            except Exception as exc:
+                if query:
                     error = f"No se pudo consultar el catálogo ({type(exc).__name__})."
                     print(f"Search error: {type(exc).__name__}: {exc}", flush=True)
+                else:
+                    print(f"Catalog pulse error: {type(exc).__name__}: {exc}", flush=True)
             self._send(
                 200,
                 _search_html(
                     query=query,
                     results=results,
                     max_age_hours=self.app.max_age_hours,
+                    pulse=pulse,
                     error=error,
                 ),
             )

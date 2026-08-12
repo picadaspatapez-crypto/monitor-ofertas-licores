@@ -1,3 +1,16 @@
+# v5.5.3 — Search UI Refresh
+
+- Rediseña el buscador web como comparador de precios, sin modificar collectors ni persistencia.
+- Mantiene el tema oscuro y mejora jerarquía visual, responsive móvil y accesibilidad.
+- La portada muestra tiendas públicas, productos comparables y precios vigentes usando consultas de solo lectura.
+- Añade búsquedas rápidas y una explicación breve de comparación, historial y Opportunity Score.
+- Las tarjetas de resultado destacan mejor precio público, ahorro frente a la segunda tienda, promedio/mínimo de 90 días y Opportunity Score.
+- Ordena visualmente las ofertas por tienda y marca con claridad el ganador.
+- CAV diagnóstico sigue excluido de las métricas y del comparador público mediante `comparison_enabled=false`.
+- No cambia `/api/search`, matching, scheduler, Telegram ni collectors.
+- Sin migraciones nuevas; Alembic continúa en `0009_price_contexts`.
+- Suite total: 158 pruebas.
+
 # v5.5.2 — Pagination Boundary & CAV Sharded Catalog Hotfix
 
 - La Vinoteca reconoce la repetición terminal posterior al último rango VTEX como fin de catálogo y no como fallo.

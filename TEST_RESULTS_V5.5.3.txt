@@ -1,0 +1,15 @@
+v5.5.3 — Search UI Refresh
+
+Base validada: v5.5.2 Pagination Boundary & CAV Sharded Catalog Hotfix
+
+Resultados:
+- pytest: 158 passed
+- python compileall app/: OK
+- Alembic head: 0009_price_contexts
+- CatalogPulse SQLite integration: OK
+  - excluye tiendas comparison_enabled=false
+  - excluye CAV diagnóstico del mercado público
+- HTML escaping regression: OK
+- Search API implementation: sin cambios
+- Collectors: sin cambios
+- Database migrations: ninguna
