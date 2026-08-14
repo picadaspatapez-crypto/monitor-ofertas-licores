@@ -1,0 +1,35 @@
+v5.7.0 — Canonical Catalog & Matching 2.0
+
+Validation date: 2026-08-14
+Base: v5.6.1 — CAV Store Ranking Notifications
+
+Full suite:
+178 passed
+
+Focused v5.7 suite:
+9 passed
+
+Hotfix applied over a clean v5.6.1 copy:
+178 passed
+
+Python compileall:
+OK
+
+Alembic head:
+0011_canonical_matching_quality (head)
+
+Database migration:
+0011_canonical_matching_quality
+
+Behavior verified:
+- Null/empty product names are BLOCKED and excluded from commercial ranking.
+- Extreme one-cycle price jumps are quarantined from comparison.
+- ABV and vintage can be extracted from explicit product titles.
+- Different vintages do not auto-match.
+- Incompatible ABV values do not auto-match.
+- Near-threshold pairs go to the persistent matching review queue.
+- Manual rejection creates a persistent exclusion rule.
+- Canonical refresh writes fingerprint, ABV, vintage and aliases.
+- Per-store Telegram ranking defensively excludes quality-blocked products.
+- Public/personal search ignores blocked publications.
+- Existing collectors and CAV pricing behavior remain unchanged.

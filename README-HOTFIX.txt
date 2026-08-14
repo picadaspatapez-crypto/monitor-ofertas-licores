@@ -1,23 +1,14 @@
-HOTFIX v5.6.1 — CAV Store Ranking Notifications
+v5.7.0 — Canonical Catalog & Matching 2.0
 
-BASE REQUERIDA
-- v5.6.0 — Personal Pricing & CAV Activation
+BASE: v5.6.1
 
-QUÉ HACE
-- Después de cada revisión CAV HEALTHY, Telegram envía el ranking CAV con el mismo formato "Mejores precios" del resto de las tiendas.
-- El Precio actual del ranking CAV es el precio MEMBER/cav_member.
-- El Precio normal informado es el precio normal publicado por CAV.
-- Calcula descuento y ahorro normal -> socio.
-- El motivo del ranking se identifica como "precio socio CAV".
-- Se mantienen activos "Tus mejores ventajas CAV" y las alertas de bajas MEMBER.
-- CAV continúa fuera del comparador público.
+1. Haz respaldo de PostgreSQL.
+2. Copia el contenido de este ZIP sobre la raíz de tu repositorio v5.6.1.
+3. Reemplaza los archivos existentes cuando corresponda.
+4. Haz commit + push y espera el deploy de Railway.
+5. Confirma que Alembic queda en 0011_canonical_matching_quality.
+6. Ejecuta un solo Run now para poblar calidad/catálogo canónico.
+7. Revisa /quality y /matching/review en el buscador privado.
 
-MIGRACIONES
-- Ninguna. Alembic sigue en 0010_personal_pricing_activation.
-
-APLICACIÓN
-1. Copiar el contenido de este hotfix sobre la raíz de v5.6.0.
-2. Reemplazar los archivos existentes.
-3. Commit + push.
-4. Esperar el deploy de Railway.
-5. Se recomienda un Run now para validar el nuevo ranking de CAV.
+Este hotfix NO cambia collectors, frecuencia de ejecución, límite de 25 minutos ni
+configuración CAV. Se concentra en identidad, matching y calidad de datos.

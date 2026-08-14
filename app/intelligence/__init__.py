@@ -1,3 +1,5 @@
+from app.intelligence.canonical import CanonicalRefreshSummary, refresh_canonical_for_runs
+from app.intelligence.quality import QualityRunSummary, summarize_quality_for_runs
 from app.intelligence.availability import AvailabilitySummary, reconcile_store_availability
 from app.intelligence.history import PriceStatisticsRefresh, refresh_price_statistics
 from app.intelligence.context_history import ContextStatisticsRefresh, refresh_context_price_statistics
@@ -13,6 +15,10 @@ __all__ = [
     "OpportunityComponents",
     "PriceStatisticsRefresh",
     "ContextStatisticsRefresh",
+    "CanonicalRefreshSummary",
+    "QualityRunSummary",
+    "refresh_canonical_for_runs",
+    "summarize_quality_for_runs",
     "classify_opportunity",
     "opportunity_score",
     "persist_opportunity_snapshots",

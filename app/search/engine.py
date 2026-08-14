@@ -148,6 +148,8 @@ def _fresh_products(
                 continue
         if not bool(getattr(product, "is_available", True)):
             continue
+        if bool(getattr(product, "excluded_from_comparison", False)):
+            continue
         seen_at = product.last_seen_at
         if seen_at is None:
             continue

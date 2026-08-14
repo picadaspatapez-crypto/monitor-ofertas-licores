@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from sqlalchemy import func, select, text
 
 from app.database import create_database
-from app.models import Product, Store
+from app.models import MatchingReview, Product, Store
+from app.matching.review import resolve_review
 from app.search.engine import SearchResult, search_products
 from app.search.formatting import format_clp, format_datetime_cl, result_to_dict
 from app.version import APP_VERSION, RELEASE_NAME
@@ -286,7 +287,7 @@ def _search_html(
     body = f"""
 <nav class="topbar">
   <a class="brand" href="/buscar" aria-label="Monitor de Licores, inicio">{_brand_mark()}<span><strong>Monitor de Licores</strong><small>Catálogo unificado · v{APP_VERSION}</small></span></a>
-  <div class="top-actions"><div class="mode-switch"><a class="{'active' if not personal_active else ''}" href="{public_href}">Mercado público</a><a class="{'active personal' if personal_active else ''}" href="{personal_href}">Con membresía CAV</a></div><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></div>
+  <div class="top-actions"><a class="review-link" href="/quality">Calidad</a><a class="review-link" href="/matching/review">Revisar matching</a><div class="mode-switch"><a class="{'active' if not personal_active else ''}" href="{public_href}">Mercado público</a><a class="{'active personal' if personal_active else ''}" href="{personal_href}">Con membresía CAV</a></div><form method="post" action="/salir"><button class="ghost" type="submit">Salir</button></form></div>
 </nav>
 <header class="hero">
   <div class="hero-copy">
@@ -305,6 +306,51 @@ def _search_html(
 {content}
 <footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>{'Incluye precios socio elegibles; el mercado público sigue separado.' if personal_active else 'Solo se comparan precios públicos y vigentes.'}</span></footer>"""
     return _page("Buscar precios · Monitor de Licores", body)
+
+
+def _matching_review_html(rows: list[tuple[MatchingReview, Product | None, Product | None]]) -> bytes:
+    cards: list[str] = []
+    for row, left, right in rows:
+        left_name = html.escape(left.name if left else "Publicación no disponible")
+        right_name = html.escape(right.name if right else "Publicación no disponible")
+        left_store = html.escape(left.store if left else "?")
+        right_store = html.escape(right.store if right else "?")
+        cards.append(f"""<article class="review-card">
+<div class="result-topline"><div class="badges"><span class="badge badge-match">Confianza {row.confidence * 100:.1f}%</span><span class="badge">{html.escape(row.proposed_method)}</span></div><span class="store-count">#{row.id}</span></div>
+<div class="review-pair"><div><small>{left_store}</small><strong>{left_name}</strong></div><span>↔</span><div><small>{right_store}</small><strong>{right_name}</strong></div></div>
+<p class="muted">{html.escape(row.reason or "Candidato cercano al umbral automático")}</p>
+<form method="post" action="/matching/review/resolve" class="review-actions">
+<input type="hidden" name="review_id" value="{row.id}">
+<button type="submit" name="decision" value="confirm">✓ Mismo producto</button>
+<button class="ghost danger" type="submit" name="decision" value="reject">✕ No comparar</button>
+</form></article>""")
+    content = "".join(cards) if cards else "<section class='empty'><h2>Sin pendientes</h2><p>No hay coincidencias dudosas que requieran revisión manual.</p></section>"
+    body = f"""<nav class="topbar"><a class="brand" href="/buscar">{_brand_mark()}<span><strong>Monitor de Licores</strong><small>v{APP_VERSION}</small></span></a><div class="top-actions"><a class="ghost button-link" href="/buscar">← Volver al buscador</a></div></nav>
+<header class="hero compact-hero"><div class="hero-copy"><div class="eyebrow">Matching 2.0 · revisión humana</div><h1>Coincidencias dudosas</h1><p>Confirma equivalencias o bloquea falsos matches. La decisión queda persistente para los próximos ciclos.</p></div></header>
+<section class="review-list">{content}</section>
+<footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>Las decisiones manuales prevalecen sobre el matching automático.</span></footer>"""
+    return _page("Revisión de matching · Monitor de Licores", body)
+
+
+def _quality_html(rows: list[Product], *, blocked: int, warnings: int) -> bytes:
+    cards: list[str] = []
+    for product in rows:
+        issues = ", ".join(str(value) for value in (product.data_quality_issues or [])) or "sin detalle"
+        status = html.escape(product.data_quality_status or "CLEAN")
+        cards.append(f"""<article class="quality-card">
+<div class="result-topline"><div class="badges"><span class="badge quality-{status.casefold()}">{status}</span><span class="badge badge-match">Score {int(product.data_quality_score or 0)}/100</span></div><span class="store-count">{html.escape(product.store)}</span></div>
+<h2>{html.escape(product.name)}</h2>
+<p class="muted">{html.escape(issues)}</p>
+<div class="quality-meta"><span>Precio: {format_clp(int(product.current_price or 0))}</span><span>{'Excluido del comparador' if product.excluded_from_comparison else 'Visible con advertencia'}</span></div>
+<a class="store-link" href="{html.escape(product.url, quote=True)}" target="_blank" rel="noopener noreferrer">Abrir publicación ↗</a>
+</article>""")
+    content = "".join(cards) if cards else "<section class='empty'><h2>Sin incidencias</h2><p>No hay publicaciones WARNING/BLOCKED en el catálogo actual.</p></section>"
+    body = f"""<nav class="topbar"><a class="brand" href="/buscar">{_brand_mark()}<span><strong>Monitor de Licores</strong><small>v{APP_VERSION}</small></span></a><div class="top-actions"><a class="ghost button-link" href="/buscar">← Volver al buscador</a></div></nav>
+<header class="hero compact-hero"><div class="hero-copy"><div class="eyebrow">Data Quality Engine</div><h1>Calidad del catálogo</h1><p>Las publicaciones bloqueadas se conservan en historial, pero no pueden competir en comparaciones ni Opportunity Scores.</p></div></header>
+<section class="quality-summary"><div><strong>{blocked}</strong><span>bloqueadas</span></div><div><strong>{warnings}</strong><span>advertencias</span></div></section>
+<section class="quality-list">{content}</section>
+<footer><span>Monitor de Licores · {html.escape(RELEASE_NAME)}</span><span>Score mínimo para competir: 60/100 y sin condición crítica.</span></footer>"""
+    return _page("Calidad del catálogo · Monitor de Licores", body)
 
 
 class SearchApplication:
@@ -348,6 +394,49 @@ class SearchApplication:
                 eligible_audiences=self.personal_price_audiences,
             )
 
+    def quality_incidents(self, *, limit: int = 100) -> tuple[list[Product], int, int]:
+        with self.SessionLocal() as session:
+            active_quality = (Product.is_available.is_(True), Store.is_active.is_(True))
+            blocked = int(session.scalar(
+                select(func.count(Product.id)).join(Store, Product.store_id == Store.id).where(
+                    *active_quality, Product.data_quality_status == "BLOCKED"
+                )
+            ) or 0)
+            warnings = int(session.scalar(
+                select(func.count(Product.id)).join(Store, Product.store_id == Store.id).where(
+                    *active_quality, Product.data_quality_status == "WARNING"
+                )
+            ) or 0)
+            rows = list(session.scalars(
+                select(Product).join(Store, Product.store_id == Store.id)
+                .where(*active_quality, Product.data_quality_status.in_(("BLOCKED", "WARNING")))
+                .order_by(Product.data_quality_score.asc(), Product.last_seen_at.desc())
+                .limit(max(1, min(limit, 200)))
+            ))
+            for row in rows:
+                session.expunge(row)
+            return rows, blocked, warnings
+
+    def matching_reviews(self, *, limit: int = 50) -> list[tuple[MatchingReview, Product | None, Product | None]]:
+        with self.SessionLocal() as session:
+            reviews = list(session.scalars(
+                select(MatchingReview)
+                .where(MatchingReview.status == "pending")
+                .order_by(MatchingReview.confidence.desc(), MatchingReview.id)
+                .limit(max(1, min(limit, 100)))
+            ))
+            result = []
+            for row in reviews:
+                result.append((row, session.get(Product, row.left_product_id), session.get(Product, row.right_product_id)))
+            # Detach before closing the session.
+            for row, left, right in result:
+                session.expunge(row)
+                if left is not None:
+                    session.expunge(left)
+                if right is not None and right is not left:
+                    session.expunge(right)
+            return result
+
     def catalog_pulse(self) -> CatalogPulse:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.max_age_hours)
         with self.SessionLocal() as session:
@@ -366,6 +455,7 @@ class SearchApplication:
             product_filter = (
                 *public_filter,
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
                 Product.current_price > 0,
                 Product.last_seen_at >= cutoff,
             )
@@ -394,7 +484,7 @@ class SearchApplication:
 
 
 class SearchHandler(BaseHTTPRequestHandler):
-    server_version = "LiquorSearch/5.6.1"
+    server_version = "LiquorSearch/5.7.0"
 
     @property
     def app(self) -> SearchApplication:
@@ -480,6 +570,28 @@ class SearchHandler(BaseHTTPRequestHandler):
             self._redirect("/buscar")
             return
 
+        if parsed.path == "/quality":
+            if not self._require_auth():
+                return
+            try:
+                rows, blocked, warnings = self.app.quality_incidents()
+                self._send(200, _quality_html(rows, blocked=blocked, warnings=warnings))
+            except Exception as exc:
+                print(f"Quality dashboard error: {type(exc).__name__}: {exc}", flush=True)
+                self._send(500, _page("Error", "<section class='empty'><h2>No se pudo cargar la calidad del catálogo.</h2></section>"))
+            return
+
+        if parsed.path == "/matching/review":
+            if not self._require_auth():
+                return
+            try:
+                rows = self.app.matching_reviews()
+                self._send(200, _matching_review_html(rows))
+            except Exception as exc:
+                print(f"Matching review error: {type(exc).__name__}: {exc}", flush=True)
+                self._send(500, _page("Error", "<section class='empty'><h2>No se pudo cargar la revisión de matching.</h2></section>"))
+            return
+
         if parsed.path == "/buscar":
             if not self._require_auth():
                 return
@@ -553,6 +665,21 @@ class SearchHandler(BaseHTTPRequestHandler):
                 self._redirect(destination, cookie=cookie)
             else:
                 self._send(401, _login_html(error="Clave incorrecta.", next_path=destination))
+            return
+
+        if parsed.path == "/matching/review/resolve":
+            if not self._require_auth():
+                return
+            try:
+                review_id = int(form.get("review_id", ["0"])[0])
+                decision = form.get("decision", [""])[0]
+                with self.app.SessionLocal() as session:
+                    resolve_review(session, review_id=review_id, decision=decision)
+                    session.commit()
+                self._redirect("/matching/review")
+            except Exception as exc:
+                print(f"Matching resolve error: {type(exc).__name__}: {exc}", flush=True)
+                self._send(400, _page("Error", "<section class='empty'><h2>No se pudo guardar la decisión.</h2></section>"))
             return
 
         if parsed.path == "/salir":

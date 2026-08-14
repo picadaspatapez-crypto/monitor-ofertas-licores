@@ -938,3 +938,38 @@ Snapshot vigente del Opportunity Score, tienda/precio ganador, ahorro,
 confianza y componentes de historial, frescura y escasez.
 
 La migración responsable es `0008_catalog_intelligence`.
+
+
+## v5.7 — identidad canónica y calidad
+
+Migración: `0011_canonical_matching_quality`.
+
+### Nuevos campos
+
+`master_products`:
+- `canonical_fingerprint`
+- `abv_pct`
+- `vintage_year`
+- `identity_confidence`
+
+`products`:
+- `abv_pct`
+- `vintage_year`
+- `package_quantity`
+- `data_quality_score`
+- `data_quality_status`
+- `data_quality_issues`
+- `excluded_from_comparison`
+
+`product_matches`:
+- `evidence_json`
+
+### Nuevas tablas
+
+`canonical_aliases`: aliases observados/confirmados de cada identidad maestra.
+
+`matching_review_queue`: pares cercanos al umbral o ambiguos y su resolución manual.
+
+`data_quality_events`: auditoría inmutable del score y los issues detectados en cada observación.
+
+Los registros bloqueados **no se eliminan**. Continúan disponibles para auditoría e historial, pero `excluded_from_comparison=true` impide que modifiquen resultados comerciales.

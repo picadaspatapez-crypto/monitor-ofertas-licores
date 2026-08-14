@@ -129,6 +129,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .where(
                 Product.master_product_id.is_not(None),
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
                 Product.current_price > 0,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),

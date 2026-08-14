@@ -131,6 +131,7 @@ def refresh_context_price_statistics(session: Session) -> ContextStatisticsRefre
                 Store.is_active.is_(True),
                 _eligible_store_filter(),
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
                 ProductPriceQuote.is_active.is_(True),
                 ProductPriceQuote.price > 0,
             )
@@ -160,6 +161,7 @@ def refresh_context_price_statistics(session: Session) -> ContextStatisticsRefre
                 Store.is_active.is_(True),
                 _eligible_store_filter(),
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
                 PriceQuoteObservation.observed_at >= now - timedelta(days=90),
             )
             .group_by(

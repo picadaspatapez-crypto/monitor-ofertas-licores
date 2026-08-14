@@ -58,8 +58,12 @@ def ranked_best_prices(items: list[SavedProduct]) -> list[SavedProduct]:
     4. Mayor ahorro absoluto en CLP.
     5. Menor precio actual y nombre, solo como desempate final.
     """
+    eligible = [
+        saved for saved in items
+        if not bool(getattr(saved.product, "excluded_from_comparison", False))
+    ]
     return sorted(
-        items,
+        eligible,
         key=lambda saved: (
             0 if (saved.price_dropped or _reported_discount(saved)) else 1,
             -_effective_discount_pct(saved),

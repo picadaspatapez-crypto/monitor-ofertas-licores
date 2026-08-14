@@ -1,3 +1,15 @@
+# Estado v5.7
+
+**v5.7.0 — Canonical Catalog & Matching 2.0** implementa el catálogo canónico, la cola de revisión manual y el Data Quality Engine.
+
+Siguiente línea propuesta:
+
+- **v5.7.1**: solo estabilización si producción revela casos borde.
+- **v5.8.0**: Commercial Intelligence 2.0, mínimos históricos y rareza de ofertas.
+- **v5.9.0**: expansión controlada con nuevas tiendas.
+
+---
+
 # Roadmap
 
 ## Versiones completadas

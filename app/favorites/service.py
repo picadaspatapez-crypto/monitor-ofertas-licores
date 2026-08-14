@@ -126,6 +126,7 @@ def current_snapshot(
                 Product.last_seen_at >= cutoff,
                 Product.current_price > 0,
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
             )
         ).unique()
     )
@@ -149,6 +150,7 @@ def _snapshot_for_runs(
                 PriceObservation.scrape_run_id.in_(run_ids),
                 PriceObservation.price > 0,
                 Product.is_available.is_(True),
+                Product.excluded_from_comparison.is_(False),
             )
         ).unique()
     )

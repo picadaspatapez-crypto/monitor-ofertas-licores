@@ -1,3 +1,18 @@
+# v5.7.0 — Canonical Catalog & Matching 2.0
+
+- Convierte `master_products` en un catálogo canónico enriquecido con fingerprint de identidad, graduación alcohólica, añada, formato e indicador de confianza.
+- Añade aliases canónicos persistentes por publicación/tienda sin perder el nombre original.
+- Matching 2.0 mantiene EAN como señal primaria, degrada SKU a evidencia secundaria y bloquea conflictos de volumen, añada, ABV, variante y pack.
+- Los candidatos cercanos al umbral o ambiguos ya no se fuerzan: entran a `matching_review_queue`.
+- El buscador privado incorpora `/matching/review` para confirmar “Mismo producto” o “No comparar”; las decisiones crean reglas persistentes y prevalecen en ciclos futuros.
+- Data Quality Engine puntúa cada publicación de 0 a 100 y registra issues como nombre inválido, precio imposible, descuento incoherente o salto extremo.
+- Las publicaciones `BLOCKED` se conservan en historial, pero quedan fuera del comparador, búsqueda pública/personal, favoritos, históricos y Opportunity Scores.
+- Añade `/quality` al buscador privado para auditar `WARNING` y `BLOCKED`.
+- Registra auditoría en `data_quality_events` y evidencia de matching en `product_matches.evidence_json`.
+- Migración Alembic `0011_canonical_matching_quality`.
+- Sin cambios en collectors, scheduler ni política CAV; el foco de v5.7 es identidad y calidad de datos.
+- Suite total: 178 pruebas.
+
 # v5.6.1 — CAV Store Ranking Notifications
 
 - CAV recibe ahora, tras cada revisión HEALTHY, su bloque automático de `🏆 Mejores precios` con el mismo formato usado por las tiendas públicas.

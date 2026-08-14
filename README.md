@@ -1,6 +1,6 @@
 # Monitor de Ofertas de Licores
 
-**Versión actual: v5.6.1 — CAV Store Ranking Notifications.**
+**Versión actual: v5.7.0 — Canonical Catalog & Matching 2.0.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial,
 comparar productos equivalentes, medir oportunidades reales y consultar el
@@ -25,6 +25,18 @@ catálogo desde web o Telegram.
   excluida del comparador público.
 
 La Barra, Tost y GradoÚnico permanecen fuera del registry activo.
+
+## Novedades de v5.7
+
+- **Catálogo canónico:** cada identidad maestra conserva fingerprint, volumen, marca, ABV, añada, formato y aliases observados por tienda.
+- **Matching 2.0:** EAN es la señal estructural principal; SKU solo refuerza un match cuando la identidad textual/estructural ya es fuerte.
+- **Conflictos duros:** no se comparan automáticamente productos con distinto volumen, añada, graduación incompatible, variante o presentación pack/regalo.
+- **Cola de revisión:** candidatos cercanos al umbral quedan pendientes en `/matching/review` en vez de forzar una equivalencia dudosa.
+- **Decisiones persistentes:** “Mismo producto” y “No comparar” generan reglas manuales que se reutilizan en los siguientes ciclos.
+- **Data Quality Engine:** cada publicación recibe score 0–100, estado `CLEAN`, `WARNING` o `BLOCKED` y lista de incidencias.
+- **Protección del comparador:** registros bloqueados permanecen auditables pero no pueden alterar búsqueda, históricos, favoritos ni Opportunity Score.
+- **Panel de calidad:** `/quality` muestra publicaciones sospechosas y la razón exacta de su exclusión.
+- **Migración:** `0011_canonical_matching_quality`.
 
 ## Novedades de v5.6
 
@@ -93,7 +105,7 @@ Postgres
    ▲
    ├── monitor-ofertas-licores
    │      cron cada 6 horas
-   │      7 collectors activos, máximo 4 workers
+   │      8 tiendas públicas + CAV personal, máximo 4 workers
    │      matching + historial + Opportunity Score
    │
    └── buscador-licores
@@ -102,9 +114,9 @@ Postgres
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.6.md`](DEPLOY_V5.6.md).
+Consulta [`DEPLOY_V5.7.md`](DEPLOY_V5.7.md).
 
-La versión incorpora la migración Alembic `0010_personal_pricing_activation`. El
+La versión incorpora la migración Alembic `0011_canonical_matching_quality`. El
 `entrypoint.sh` existente ejecuta `alembic upgrade head` antes del pipeline.
 
 ## Ejecución local

@@ -95,3 +95,55 @@ python -m app.matching.rules exclusion \
 
 Las exclusiones tienen prioridad y evitan que la pareja vuelva a unificarse en
 ejecuciones posteriores.
+
+---
+
+# Matching 2.0 — v5.7
+
+## Jerarquía de evidencia
+
+1. **Regla manual confirmada**: 100 %, persistente.
+2. **EAN idéntico**: 100 %, salvo conflicto estructural imposible (formato, añada o ABV).
+3. **SKU coincidente**: señal secundaria; solo se acepta si marca, volumen y el matching independiente superan 92 %.
+4. **Firma exacta/alias**: nombre normalizado, volumen, variante y metadatos compatibles.
+5. **Fuzzy conservador**: umbral operativo mínimo configurado, por defecto 86 %.
+6. **Cerca del umbral**: no se fusiona; se envía a revisión humana.
+
+## Conflictos duros
+
+El reconciliador rechaza antes del scoring:
+
+- botella vs pack/regalo;
+- distinto volumen;
+- añadas distintas cuando ambas están explícitas;
+- graduaciones alcohólicas que difieren más de 1,5 puntos;
+- marcas incompatibles;
+- variantes explícitas incompatibles.
+
+## Revisión humana
+
+En el buscador privado:
+
+```text
+/matching/review
+```
+
+Cada tarjeta ofrece:
+
+- **Mismo producto** → crea una regla `equivalence`;
+- **No comparar** → crea una regla `exclusion`.
+
+También se conserva la vía CLI:
+
+```bash
+python -m app.matching.review list --limit 20
+python -m app.matching.review resolve 123 confirm --notes "EAN verificado"
+python -m app.matching.review resolve 124 reject --notes "distinta edición"
+```
+
+Los pares que posteriormente superan el umbral automático se cierran como `auto_resolved` y dejan de aparecer en la cola.
+
+## Catálogo canónico
+
+`master_products` incorpora `canonical_fingerprint`, `abv_pct`, `vintage_year` e `identity_confidence`.
+Los nombres observados se conservan en `canonical_aliases`, asociados al producto maestro y a su tienda de origen.

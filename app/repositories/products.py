@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain import CollectedProduct, SavedProduct
+from app.intelligence.quality import apply_quality_assessment
 from app.matching import normalize_product_name
 from app.models import (MasterProduct, PriceObservation, PriceQuoteObservation, Product, ProductMatch, ProductPriceQuote, ScrapeRun, Store)
 from app.repositories.common import utcnow
@@ -219,6 +220,9 @@ def save_product(
     if item.ean and not master.ean:
         master.ean = item.ean
     _link_master_product(session, product, master)
+    apply_quality_assessment(
+        session, product=product, scrape_run=scrape_run, previous_price=previous_price
+    )
     _persist_price_quotes(session, item, product, scrape_run)
     session.add(
         PriceObservation(

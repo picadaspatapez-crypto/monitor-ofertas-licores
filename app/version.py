@@ -1,3 +1,3 @@
-__version__ = "5.6.1"
+__version__ = "5.7.0"
 APP_VERSION = __version__
-RELEASE_NAME = "CAV Store Ranking Notifications"
+RELEASE_NAME = "Canonical Catalog & Matching 2.0"

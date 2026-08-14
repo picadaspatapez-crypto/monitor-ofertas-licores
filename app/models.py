@@ -64,6 +64,10 @@ class MasterProduct(Base):
     status: Mapped[str] = mapped_column(String(30), default="active", index=True)
     variant: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     package_quantity: Mapped[int] = mapped_column(Integer, default=1)
+    canonical_fingerprint: Mapped[str | None] = mapped_column(String(700), nullable=True, index=True)
+    abv_pct: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    vintage_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    identity_confidence: Mapped[float] = mapped_column(Float, default=0.5)
     aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)
     search_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -101,6 +105,13 @@ class Product(Base):
     discount_pct: Mapped[float] = mapped_column(Float, default=0.0)
     sku: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     ean: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    abv_pct: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    vintage_year: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    package_quantity: Mapped[int] = mapped_column(Integer, default=1)
+    data_quality_score: Mapped[int] = mapped_column(Integer, default=100, index=True)
+    data_quality_status: Mapped[str] = mapped_column(String(30), default="CLEAN", index=True)
+    data_quality_issues: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    excluded_from_comparison: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     missing_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -147,6 +158,7 @@ class ProductMatch(Base):
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     matching_method: Mapped[str] = mapped_column(String(50), default="exact_normalized")
     review_status: Mapped[str] = mapped_column(String(30), default="automatic", index=True)
+    evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -338,6 +350,58 @@ class PriceContextStatistic(Base):
     observations_total: Mapped[int] = mapped_column(Integer, default=0)
     days_at_current_price: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class CanonicalAlias(Base):
+    """Alias observado/confirmado que apunta a una identidad canónica."""
+
+    __tablename__ = "canonical_aliases"
+    __table_args__ = (
+        UniqueConstraint("master_product_id", "alias_key", name="uq_canonical_alias_master_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    master_product_id: Mapped[int] = mapped_column(ForeignKey("master_products.id"), index=True)
+    alias_text: Mapped[str] = mapped_column(String(500))
+    alias_key: Mapped[str] = mapped_column(String(500), index=True)
+    source: Mapped[str] = mapped_column(String(120), default="observed", index=True)
+    is_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class MatchingReview(Base):
+    """Cola persistente para pares cercanos al umbral o ambiguos."""
+
+    __tablename__ = "matching_review_queue"
+    __table_args__ = (
+        UniqueConstraint("left_product_id", "right_product_id", name="uq_matching_review_pair"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    left_product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    right_product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    confidence: Mapped[float] = mapped_column(Float, index=True)
+    proposed_method: Mapped[str] = mapped_column(String(80))
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
+    resolution_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DataQualityEvent(Base):
+    """Auditoría inmutable del score de calidad de una publicación."""
+
+    __tablename__ = "data_quality_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    scrape_run_id: Mapped[int | None] = mapped_column(ForeignKey("scrape_runs.id"), nullable=True, index=True)
+    score: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    issues: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class MatchingRule(Base):

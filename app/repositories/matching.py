@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.matching import MatchCandidate, build_matching_plan, build_product_signature, normalize_product_name
+from app.matching import MatchCandidate, build_matching_plan, build_product_signature, compare_signatures, normalize_product_name
 from app.matching.rules import rule_key
-from app.models import MatchingRule, MasterProduct, PriceObservation, Product, ProductMatch
+from app.models import MatchingReview, MatchingRule, MasterProduct, PriceObservation, Product, ProductMatch
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,8 @@ class ReconciliationSummary:
     fuzzy_matches: int
     products_relinked: int
     masters_merged: int
+    review_candidates: int = 0
+    review_pending: int = 0
 
 
 def products_observed_in_runs(session: Session, run_ids: list[int]) -> list[Product]:
@@ -32,6 +34,7 @@ def products_observed_in_runs(session: Session, run_ids: list[int]) -> list[Prod
         select(Product)
         .join(PriceObservation, PriceObservation.product_id == Product.id)
         .where(PriceObservation.scrape_run_id.in_(run_ids))
+        .where(Product.excluded_from_comparison.is_(False))
         .distinct()
         .order_by(Product.id)
     )
@@ -87,18 +90,22 @@ def _augmented_candidates(session: Session, products: list[Product], plan) -> tu
     for group in by_ean.values():
         for index, left in enumerate(group):
             for right in group[index + 1 :]:
+                left_sig, right_sig = signatures[int(left.id)], signatures[int(right.id)]
+                # EAN is the strongest identifier, but impossible structural conflicts
+                # still win over a dirty/reused barcode.
+                structural = compare_signatures(left_sig, right_sig, minimum_confidence=0.0)
+                if structural.method in {"volume_conflict", "vintage_conflict", "abv_conflict", "excluded_pack"}:
+                    continue
                 add_pair(left, right, confidence=1.0, method="ean_exact")
     for group in by_sku.values():
         for index, left in enumerate(group):
             for right in group[index + 1 :]:
                 left_sig, right_sig = signatures[int(left.id)], signatures[int(right.id)]
-                if (
-                    left_sig.volume_ml is not None
-                    and left_sig.volume_ml == right_sig.volume_ml
-                    and left_sig.brand
-                    and left_sig.brand == right_sig.brand
-                ):
-                    add_pair(left, right, confidence=0.995, method="sku_brand_volume_exact")
+                # SKU is store-scoped in many commerces. It is only a secondary
+                # signal when the independent identity evidence is already strong.
+                score = compare_signatures(left_sig, right_sig, minimum_confidence=0.92)
+                if score.accepted and left_sig.brand and left_sig.brand == right_sig.brand:
+                    add_pair(left, right, confidence=max(0.97, score.confidence), method="sku_secondary_verified")
 
     active_rules = list(
         session.scalars(select(MatchingRule).where(MatchingRule.is_active.is_(True)))
@@ -127,6 +134,48 @@ def _augmented_candidates(session: Session, products: list[Product], plan) -> tu
     return tuple(sorted(candidates.values(), key=lambda item: (item.left_id, item.right_id)))
 
 
+def _persist_review_candidates(session: Session, plan) -> tuple[int, int]:
+    created_or_refreshed = 0
+    for candidate in plan.review_candidates[:500]:
+        left_id, right_id = sorted((int(candidate.left_id), int(candidate.right_id)))
+        row = session.scalar(
+            select(MatchingReview).where(
+                MatchingReview.left_product_id == left_id,
+                MatchingReview.right_product_id == right_id,
+            )
+        )
+        if row is None:
+            row = MatchingReview(
+                left_product_id=left_id, right_product_id=right_id,
+                confidence=float(candidate.confidence), proposed_method=candidate.method,
+                reason=candidate.reason, status="pending",
+            )
+            session.add(row)
+            created_or_refreshed += 1
+        elif row.status == "pending":
+            row.confidence = float(candidate.confidence)
+            row.proposed_method = candidate.method
+            row.reason = candidate.reason
+            created_or_refreshed += 1
+    session.flush()
+    pending = int(session.scalar(select(func.count(MatchingReview.id)).where(MatchingReview.status == "pending")) or 0)
+    return created_or_refreshed, pending
+
+
+def _close_auto_resolved_reviews(session: Session, candidates: tuple[MatchCandidate, ...]) -> None:
+    if not candidates:
+        return
+    accepted_pairs = {tuple(sorted((int(item.left_id), int(item.right_id)))) for item in candidates}
+    pending = list(session.scalars(select(MatchingReview).where(MatchingReview.status == "pending")))
+    for row in pending:
+        pair = tuple(sorted((int(row.left_product_id), int(row.right_product_id))))
+        if pair in accepted_pairs:
+            row.status = "auto_resolved"
+            row.resolution_notes = "El par superó el umbral automático en una revisión posterior."
+            from datetime import datetime, timezone
+            row.resolved_at = datetime.now(timezone.utc)
+
+
 def reconcile_cross_store_matches(
     session: Session,
     *,
@@ -135,7 +184,9 @@ def reconcile_cross_store_matches(
 ) -> ReconciliationSummary:
     products = products_observed_in_runs(session, run_ids)
     plan = build_matching_plan(products, minimum_confidence=minimum_confidence)
+    review_candidates, review_pending = _persist_review_candidates(session, plan)
     candidates = _augmented_candidates(session, products, plan)
+    _close_auto_resolved_reviews(session, candidates)
     if not candidates:
         return ReconciliationSummary(
             total_products=plan.total_products,
@@ -149,6 +200,8 @@ def reconcile_cross_store_matches(
             fuzzy_matches=0,
             products_relinked=0,
             masters_merged=0,
+            review_candidates=review_candidates,
+            review_pending=review_pending,
         )
 
     products_by_id = {int(product.id): product for product in products}
@@ -164,7 +217,7 @@ def reconcile_cross_store_matches(
 
     products_relinked = 0
     merged_master_ids: set[int] = set()
-    exact_methods = {"alias_exact", "ean_exact", "sku_brand_volume_exact", "manual_equivalence"}
+    exact_methods = {"alias_exact", "ean_exact", "sku_secondary_verified", "manual_equivalence"}
     exact_matches = sum(candidate.method in exact_methods for candidate in candidates)
     fuzzy_matches = len(candidates) - exact_matches
 
@@ -193,6 +246,10 @@ def reconcile_cross_store_matches(
         if target is None:
             continue
         target.status = "active"
+        target.identity_confidence = max(
+            float(target.identity_confidence or 0.5),
+            min((float(edge.confidence) for edge in group_edges), default=0.5),
+        )
 
         signatures = [build_product_signature(product.name) for product in group_products]
         volumes = {signature.volume_ml for signature in signatures if signature.volume_ml is not None}
@@ -236,6 +293,7 @@ def reconcile_cross_store_matches(
                         confidence=confidence,
                         matching_method=method,
                         review_status=("manual" if method == "manual_equivalence" else "automatic"),
+                        evidence_json={"method": method, "confidence": round(float(confidence), 4)},
                     )
                 )
             else:
@@ -243,6 +301,7 @@ def reconcile_cross_store_matches(
                 match.confidence = confidence
                 match.matching_method = method
                 match.review_status = "manual" if method == "manual_equivalence" else "automatic"
+                match.evidence_json = {"method": method, "confidence": round(float(confidence), 4)}
 
     session.flush()
     masters_merged = 0
@@ -271,4 +330,6 @@ def reconcile_cross_store_matches(
         fuzzy_matches=fuzzy_matches,
         products_relinked=products_relinked,
         masters_merged=masters_merged,
+        review_candidates=review_candidates,
+        review_pending=review_pending,
     )

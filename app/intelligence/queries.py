@@ -63,6 +63,7 @@ def top_opportunities(
         .where(
             OpportunitySnapshot.score >= minimum_score,
             Product.is_available.is_(True),
+            Product.excluded_from_comparison.is_(False),
             Store.is_active.is_(True),
         )
         .order_by(*ordering, MasterProduct.canonical_name)

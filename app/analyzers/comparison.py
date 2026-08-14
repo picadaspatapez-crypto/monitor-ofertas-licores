@@ -177,6 +177,7 @@ def analyze_cross_store_prices(
                     "manual_equivalence",
                     "ean_exact",
                     "sku_brand_volume_exact",
+                    "sku_secondary_verified",
                 }
                 trusted = bool(
                     left_match

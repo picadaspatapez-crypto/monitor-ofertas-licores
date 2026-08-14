@@ -21,6 +21,8 @@ from app.intelligence import (
     refresh_price_statistics,
     refresh_context_price_statistics,
     refresh_personal_opportunities,
+    refresh_canonical_for_runs,
+    summarize_quality_for_runs,
 )
 from app.models import ScrapeRun, Store
 from app.notifications import (
@@ -374,7 +376,13 @@ def _send_store_notifications(
             session.expunge(last_incident_alert)
 
     personal_only = personal_comparison_enabled and not comparison_enabled
-    notification_items = saved
+    quality_blocked = [item for item in saved if bool(getattr(item.product, "excluded_from_comparison", False))]
+    notification_items = [item for item in saved if not bool(getattr(item.product, "excluded_from_comparison", False))]
+    if quality_blocked:
+        print(
+            f"Data Quality {store_name}: {len(quality_blocked)} publicación(es) excluidas de rankings/alertas.",
+            flush=True,
+        )
     notification_analysis = analysis
     if personal_only:
         notification_items = member_priced_saved_items(
@@ -837,11 +845,13 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
     stage_started = time.monotonic()
     try:
         with SessionLocal() as session:
+            quality = summarize_quality_for_runs(session, run_ids)
             matching = reconcile_cross_store_matches(
                 session,
                 run_ids=run_ids,
                 minimum_confidence=settings.cross_store_match_min_confidence,
             )
+            canonical = refresh_canonical_for_runs(session, run_ids)
             session.flush()
             historical = refresh_price_statistics(session)
             contextual = refresh_context_price_statistics(session)
@@ -871,6 +881,11 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Matches difusos...........: {matching.fuzzy_matches}", flush=True)
         print(f"Productos reagrupados.....: {matching.products_relinked}", flush=True)
         print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
+        print(f"Calidad CLEAN/WARN/BLOCK..: {quality.clean}/{quality.warnings}/{quality.blocked}", flush=True)
+        print(f"Revisión matching nueva...: {matching.review_candidates}", flush=True)
+        print(f"Revisión matching pendiente: {matching.review_pending}", flush=True)
+        print(f"Maestros canónicos actual.: {canonical.masters_updated}", flush=True)
+        print(f"Aliases canónicos vistos..: {canonical.aliases_registered}", flush=True)
         print(f"Equivalencias verificadas.: {comparison.verified_matches}", flush=True)
         print(f"Estadísticas históricas...: {historical.rows_updated}", flush=True)
         print(f"Históricos contextuales....: {contextual.rows_updated}", flush=True)

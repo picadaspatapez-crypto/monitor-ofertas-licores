@@ -8,6 +8,7 @@ from itertools import combinations
 from typing import Iterable
 
 from app.matching.normalize import extract_volume_ml
+from app.matching.identity import extract_abv_pct, extract_vintage_year
 
 
 _PHRASE_ALIASES = {
@@ -186,6 +187,8 @@ class ProductSignature:
     is_pack: bool
     brand: str | None
     variant_tokens: frozenset[str]
+    abv_pct: float | None
+    vintage_year: int | None
 
     @property
     def comparison_key(self) -> str:
@@ -210,8 +213,18 @@ class MatchCandidate:
 
 
 @dataclass(frozen=True)
+class ReviewCandidate:
+    left_id: int
+    right_id: int
+    confidence: float
+    method: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class MatchingPlan:
     candidates: tuple[MatchCandidate, ...]
+    review_candidates: tuple[ReviewCandidate, ...]
     total_products: int
     eligible_products: int
     skipped_packs: int
@@ -304,6 +317,8 @@ def build_product_signature(name: str) -> ProductSignature:
         is_pack=is_pack,
         brand=brand,
         variant_tokens=variant_tokens,
+        abv_pct=extract_abv_pct(name),
+        vintage_year=extract_vintage_year(name),
     )
 
 
@@ -319,6 +334,10 @@ def compare_signatures(
         return PairScore(False, 0.0, "unknown_volume", "volumen no verificable")
     if left.volume_ml != right.volume_ml:
         return PairScore(False, 0.0, "volume_conflict", "volúmenes distintos")
+    if left.vintage_year is not None and right.vintage_year is not None and left.vintage_year != right.vintage_year:
+        return PairScore(False, 0.0, "vintage_conflict", "añadas distintas")
+    if left.abv_pct is not None and right.abv_pct is not None and abs(left.abv_pct - right.abv_pct) > 1.5:
+        return PairScore(False, 0.0, "abv_conflict", "graduación alcohólica incompatible")
     if not left.core_tokens or not right.core_tokens:
         return PairScore(False, 0.0, "empty_signature", "nombre insuficiente")
     if left.brand and right.brand and left.brand != right.brand:
@@ -356,6 +375,10 @@ def compare_signatures(
         confidence = max(confidence, 0.92)
     if len(intersection) < 2 and min(len(left_set), len(right_set)) > 1:
         confidence -= 0.10
+    if left.vintage_year is not None and left.vintage_year == right.vintage_year:
+        confidence += 0.02
+    if left.abv_pct is not None and right.abv_pct is not None and abs(left.abv_pct - right.abv_pct) <= 0.2:
+        confidence += 0.015
     confidence = max(0.0, min(0.999, confidence))
 
     accepted = confidence >= minimum_confidence
@@ -404,6 +427,7 @@ def build_matching_plan(
         by_store.setdefault(int(product.store_id), []).append(int(product.id))
 
     raw_candidates: list[MatchCandidate] = []
+    review_raw: list[ReviewCandidate] = []
     checked_pairs = 0
     for left_store, right_store in combinations(sorted(by_store), 2):
         left_ids = by_store[left_store]
@@ -430,6 +454,13 @@ def build_matching_plan(
                             right_id=right_id,
                             confidence=score.confidence,
                             method=score.method,
+                        )
+                    )
+                elif score.confidence >= max(0.72, minimum_confidence - 0.12):
+                    review_raw.append(
+                        ReviewCandidate(
+                            left_id=left_id, right_id=right_id,
+                            confidence=score.confidence, method="near_threshold", reason=score.reason,
                         )
                     )
 
@@ -461,6 +492,14 @@ def build_matching_plan(
         ordered = sorted(candidates, key=lambda item: item.confidence, reverse=True)
         if len(ordered) > 1 and abs(ordered[0].confidence - ordered[1].confidence) < 0.015:
             ambiguous_product_ids.add(key[0])
+            for item in ordered[:2]:
+                review_raw.append(
+                    ReviewCandidate(
+                        left_id=item.left_id, right_id=item.right_id,
+                        confidence=item.confidence, method="ambiguous_best",
+                        reason="dos candidatos equivalentes dentro de 0.015",
+                    )
+                )
             continue
         unambiguous_best[key] = ordered[0]
 
@@ -482,9 +521,19 @@ def build_matching_plan(
             seen_pairs.add(pair)
 
     ambiguous_products = len(ambiguous_product_ids)
+    reviews_by_pair: dict[tuple[int, int], ReviewCandidate] = {}
+    for item in review_raw:
+        pair = tuple(sorted((item.left_id, item.right_id)))
+        current = reviews_by_pair.get(pair)
+        if current is None or item.confidence > current.confidence:
+            reviews_by_pair[pair] = ReviewCandidate(
+                left_id=pair[0], right_id=pair[1], confidence=item.confidence,
+                method=item.method, reason=item.reason,
+            )
 
     return MatchingPlan(
         candidates=tuple(sorted(accepted, key=lambda item: (item.left_id, item.right_id))),
+        review_candidates=tuple(sorted(reviews_by_pair.values(), key=lambda item: (-item.confidence, item.left_id, item.right_id))),
         total_products=len(product_list),
         eligible_products=eligible,
         skipped_packs=skipped_packs,
