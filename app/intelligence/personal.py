@@ -138,8 +138,22 @@ def refresh_personal_opportunities(
         saving = max(0, runner[0] - winner[0])
         saving_pct = saving / runner[0] if runner[0] else 0.0
 
-        public_offers = [item for item in offers if item[2].comparison_enabled]
-        public_reference = min((item[0] for item in public_offers), default=None)
+        public_prices: list[int] = []
+        for product, store, _match, quotes in by_product.values():
+            if not store.comparison_enabled:
+                continue
+            public_quotes = [
+                quote for quote in quotes
+                if quote.is_active
+                and int(quote.price or 0) > 0
+                and not quote.eligibility_required
+                and str(quote.price_type or "").upper() in {"PUBLIC", "SALE"}
+            ]
+            if public_quotes:
+                public_prices.append(min(int(quote.price) for quote in public_quotes))
+            elif not store.personal_comparison_enabled and int(product.current_price or 0) > 0:
+                public_prices.append(int(product.current_price))
+        public_reference = min(public_prices, default=None)
         advantage = max(0, (public_reference or winner[0]) - winner[0]) if public_reference else 0
         advantage_pct = advantage / public_reference if public_reference else 0.0
 

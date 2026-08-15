@@ -149,7 +149,8 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
         name = _name_from_card(card, link)
         if len(name) < 3:
             continue
-        current = normal or sale or member
+        public_prices = [value for value in (sale, normal) if value is not None and value > 0]
+        current = min(public_prices) if public_prices else member
         assert current is not None
         quotes: list[CollectedPriceQuote] = []
         if normal is not None:
@@ -166,7 +167,7 @@ def _parse_html(html: str) -> tuple[dict[str, CollectedProduct], int]:
             current_price=current,
             regular_price=normal if normal and normal > current else None,
             discount_pct=((normal - current) / normal if normal and normal > current else 0.0),
-            source_sections=("CAV precios personales",),
+            source_sections=("CAV mercado público + socio",),
             sku=sku_match.group(1) if sku_match else None,
             price_quotes=tuple(quotes),
         )
@@ -492,7 +493,7 @@ class CAVCollector:
         base_url=BASE_URL,
         connector_key=key,
         requires_browser=True,
-        comparison_enabled=False,
+        comparison_enabled=True,
         diagnostic_mode=False,
         personal_comparison_enabled=True,
     )

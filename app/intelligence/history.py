@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from datetime import timedelta
 from statistics import median
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.models import MasterPriceStatistic, PriceObservation, Product, Store
+from app.models import MasterPriceStatistic, PriceObservation, Product, ProductPriceQuote, Store
 from app.repositories.common import utcnow
 
 
@@ -16,6 +16,19 @@ from app.repositories.common import utcnow
 class PriceStatisticsRefresh:
     masters_seen: int
     rows_updated: int
+
+
+def _public_price_eligible_clause():
+    public_quote_exists = exists(
+        select(ProductPriceQuote.id).where(
+            ProductPriceQuote.product_id == Product.id,
+            ProductPriceQuote.is_active.is_(True),
+            ProductPriceQuote.eligibility_required.is_(False),
+            ProductPriceQuote.price_type.in_(("PUBLIC", "SALE")),
+            ProductPriceQuote.price > 0,
+        )
+    )
+    return or_(Store.personal_comparison_enabled.is_(False), public_quote_exists)
 
 
 def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict[int, dict]:
@@ -43,6 +56,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
             Product.master_product_id.is_not(None),
             Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
             PriceObservation.observed_at >= cutoff,
             PriceObservation.price > 0,
         )
@@ -75,6 +89,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
                 Product.master_product_id.in_(result),
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
                 PriceObservation.observed_at >= cutoff,
                 PriceObservation.price > 0,
             )
@@ -101,6 +116,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.master_product_id.is_not(None),
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
                 PriceObservation.price > 0,
             )
             .group_by(Product.master_product_id)
@@ -116,6 +132,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.master_product_id.is_not(None),
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
                 PriceObservation.price > 0,
             )
             .group_by(Product.master_product_id)
@@ -133,6 +150,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.current_price > 0,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
             )
             .group_by(Product.master_product_id)
         )
@@ -148,6 +166,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.is_available.is_(True),
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
                 PriceObservation.price == Product.current_price,
                 PriceObservation.observed_at >= now - timedelta(days=90),
             )

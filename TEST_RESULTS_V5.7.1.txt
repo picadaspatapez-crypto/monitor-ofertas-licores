@@ -1,0 +1,25 @@
+v5.7.1 — Quality Command & CAV Public Market
+
+Validation date: 2026-08-15
+Base: v5.7.0 Canonical Catalog & Matching 2.0
+
+pytest -q:
+184 passed
+
+python -m compileall -q app tests:
+OK
+
+Alembic head:
+0011_canonical_matching_quality (head) 
+
+New migrations:
+None. Database remains at 0011_canonical_matching_quality.
+
+Key regressions validated:
+- Telegram recognizes /quality and /calidad.
+- Telegram quality summary renders BLOCKED/WARNING incidents.
+- CAV participates in public search with PUBLIC/SALE only.
+- CAV MEMBER/cav_member remains exclusive to personal mode.
+- CAV member-only listings are excluded from public search.
+- Cross-store analyzer uses CAV public quote rather than MEMBER/raw lower price.
+- Public history excludes hybrid listings without a public quote.

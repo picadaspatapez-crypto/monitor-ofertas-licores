@@ -36,6 +36,7 @@ from app.telegram_bot.formatting import (
     format_search_results,
     help_message,
     no_results_message,
+    quality_message,
     search_help_message,
     status_message,
     StoreStatusView,
@@ -243,6 +244,15 @@ class TelegramSearchBot:
                     stores=stores,
                 ),
             )
+            return
+        if command.name == "quality":
+            try:
+                rows, blocked, warnings = self.application.quality_incidents(limit=100)
+                text = quality_message(rows, blocked=blocked, warnings=warnings, limit=10)
+            except Exception as exc:
+                print(f"BOT quality error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar la calidad de datos en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
         if command.name == "history":
             try:

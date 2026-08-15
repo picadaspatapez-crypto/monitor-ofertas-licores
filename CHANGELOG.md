@@ -1,3 +1,10 @@
+## v5.7.1 — Quality Command & CAV Public Market
+
+- `/quality` y `/calidad` ahora funcionan directamente en Telegram y resumen BLOCKED/WARNING.
+- CAV pasa a ser fuente híbrida: participa en el mercado público usando solo `PUBLIC`/`SALE` sin elegibilidad, y mantiene `MEMBER/cav_member` para el comparador personal.
+- Los precios socio nunca se usan en el mercado público.
+- Sin migraciones nuevas; Alembic permanece en `0011_canonical_matching_quality`.
+
 # v5.7.0 — Canonical Catalog & Matching 2.0
 
 - Convierte `master_products` en un catálogo canónico enriquecido con fingerprint de identidad, graduación alcohólica, añada, formato e indicador de confianza.

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.matching import build_product_signature, compare_signatures
 from app.intelligence.opportunity import OpportunityComponents, classify_opportunity, opportunity_score
-from app.models import MasterPriceStatistic, MasterProduct, PriceObservation, Product, ProductMatch, Store
+from app.models import MasterPriceStatistic, MasterProduct, PriceObservation, Product, ProductMatch, ProductPriceQuote, Store
 from app.repositories.matching import products_observed_in_runs
 
 
@@ -95,10 +95,34 @@ def analyze_cross_store_prices(
     minimum_confidence: float = 0.86,
 ) -> ComparisonAnalysis:
     products = products_observed_in_runs(session, run_ids)
-    comparison_store_ids = set(session.scalars(
-        select(Store.id).where(Store.is_active.is_(True), Store.comparison_enabled.is_(True))
-    ))
+    comparison_stores = {
+        int(store.id): store
+        for store in session.scalars(
+            select(Store).where(Store.is_active.is_(True), Store.comparison_enabled.is_(True))
+        )
+    }
+    comparison_store_ids = set(comparison_stores)
     products = [product for product in products if product.store_id in comparison_store_ids]
+    product_ids_for_quotes = [int(product.id) for product in products]
+    public_quote_by_product: dict[int, ProductPriceQuote] = {}
+    if product_ids_for_quotes:
+        for quote in session.scalars(
+            select(ProductPriceQuote).where(
+                ProductPriceQuote.product_id.in_(product_ids_for_quotes),
+                ProductPriceQuote.is_active.is_(True),
+                ProductPriceQuote.eligibility_required.is_(False),
+                ProductPriceQuote.price_type.in_(("PUBLIC", "SALE")),
+                ProductPriceQuote.price > 0,
+            )
+        ):
+            current = public_quote_by_product.get(int(quote.product_id))
+            if current is None or int(quote.price) < int(current.price):
+                public_quote_by_product[int(quote.product_id)] = quote
+    products = [
+        product for product in products
+        if not bool(getattr(comparison_stores[int(product.store_id)], "personal_comparison_enabled", False))
+        or int(product.id) in public_quote_by_product
+    ]
     if not products:
         return ComparisonAnalysis(0, 0, 0, (), (), 0, 0)
 
@@ -143,6 +167,16 @@ def analyze_cross_store_prices(
         current_run_ids=run_ids,
     )
 
+    def public_price(product: Product) -> int:
+        quote = public_quote_by_product.get(int(product.id))
+        return int(quote.price) if quote is not None else int(product.current_price)
+
+    def public_regular_price(product: Product) -> int | None:
+        quote = public_quote_by_product.get(int(product.id))
+        if quote is not None:
+            return int(quote.regular_price) if quote.regular_price is not None else None
+        return int(product.regular_price) if product.regular_price is not None else None
+
     by_master: dict[int, list[Product]] = {}
     for product in products:
         if product.master_product_id is None or product.store_id is None:
@@ -159,7 +193,7 @@ def analyze_cross_store_prices(
         for product in group_products:
             store_id = int(product.store_id)
             current = cheapest_by_store.get(store_id)
-            if current is None or product.current_price < current.current_price:
+            if current is None or public_price(product) < public_price(current):
                 cheapest_by_store[store_id] = product
         if len(cheapest_by_store) < 2:
             continue
@@ -220,13 +254,13 @@ def analyze_cross_store_prices(
                         store_id=int(product.store_id),
                         store_name=stores[int(product.store_id)].name,
                         product_name=product.name,
-                        price=int(product.current_price),
-                        regular_price=(
-                            int(product.regular_price)
-                            if product.regular_price is not None
-                            else None
+                        price=public_price(product),
+                        regular_price=public_regular_price(product),
+                        discount_pct=(
+                            ((public_regular_price(product) - public_price(product)) / public_regular_price(product))
+                            if public_regular_price(product) and public_regular_price(product) > public_price(product)
+                            else 0.0
                         ),
-                        discount_pct=float(product.discount_pct or 0.0),
                         url=product.url,
                     )
                     for product in selected

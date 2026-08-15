@@ -168,7 +168,53 @@ def _quote_allowed(quote: ProductPriceQuote, eligible_audiences: set[str]) -> bo
     return quote.audience_key.casefold() in eligible_audiences
 
 
-def _offer_from_product(product: Product) -> SearchOffer:
+def _public_offer_from_product(
+    product: Product,
+    quotes: list[ProductPriceQuote] | None = None,
+) -> SearchOffer | None:
+    """Oferta pública reproducible.
+
+    Las tiendas híbridas (por ejemplo CAV) pueden tener simultáneamente precios
+    públicos y MEMBER. En mercado público se aceptan únicamente quotes sin
+    requisito de elegibilidad. Si una fuente híbrida no trae precio público, no
+    participa en la comparación pública.
+    """
+    rows = [
+        quote for quote in (quotes or [])
+        if quote.is_active
+        and int(quote.price or 0) > 0
+        and not bool(quote.eligibility_required)
+        and str(quote.price_type or "").upper() in {"PUBLIC", "SALE"}
+    ]
+    if rows:
+        priority = {"SALE": 0, "PUBLIC": 1}
+        quote = min(
+            rows,
+            key=lambda row: (int(row.price), priority.get(str(row.price_type).upper(), 9)),
+        )
+        regular = int(quote.regular_price) if quote.regular_price is not None else None
+        discount = ((regular - quote.price) / regular) if regular and regular > quote.price else 0.0
+        seen = product.last_seen_at
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+        return SearchOffer(
+            product_id=int(product.id),
+            store_name=product.store_record.name if product.store_record is not None else product.store,
+            product_name=product.name,
+            price=int(quote.price),
+            regular_price=regular,
+            discount_pct=float(discount),
+            url=product.url,
+            last_seen_at=seen,
+            price_type=str(quote.price_type or "PUBLIC").upper(),
+            audience_key=quote.audience_key or "public",
+            eligibility_required=False,
+            is_public_market=True,
+        )
+
+    if product.store_record is not None and bool(getattr(product.store_record, "personal_comparison_enabled", False)):
+        return None
+
     regular = int(product.regular_price) if product.regular_price is not None else None
     ptype = "SALE" if regular and regular > product.current_price else "PUBLIC"
     seen = product.last_seen_at
@@ -186,8 +232,16 @@ def _offer_from_product(product: Product) -> SearchOffer:
         price_type=ptype,
         audience_key="public",
         eligibility_required=False,
-        is_public_market=bool(product.store_record.comparison_enabled) if product.store_record is not None else True,
+        is_public_market=True,
     )
+
+
+def _offer_from_product(product: Product) -> SearchOffer:
+    # Compatibilidad interna/externa para tiendas puramente públicas.
+    offer = _public_offer_from_product(product, [])
+    if offer is None:
+        raise ValueError("La publicación no tiene un precio público elegible")
+    return offer
 
 
 def _personal_offer_from_product(
@@ -198,12 +252,9 @@ def _personal_offer_from_product(
 ) -> SearchOffer | None:
     allowed = [quote for quote in quotes if _quote_allowed(quote, eligible_audiences)]
     if not allowed:
-        # Una tienda pública puede seguir participando aun cuando su backfill de
-        # quote todavía no exista. Una fuente exclusivamente personal no hace
-        # fallback para evitar usar accidentalmente un precio no elegible.
-        if product.store_record is None or product.store_record.comparison_enabled:
-            return _offer_from_product(product)
-        return None
+        # Fallback público seguro. Para una fuente híbrida sin quote público,
+        # _public_offer_from_product devuelve None y evita reutilizar un MEMBER.
+        return _public_offer_from_product(product, quotes)
     priority = {"MEMBER": 0, "SALE": 1, "PUBLIC": 2, "CARD_PROMO": 3, "COUPON": 4}
     quote = min(
         allowed,
@@ -226,7 +277,12 @@ def _personal_offer_from_product(
         price_type=quote.price_type,
         audience_key=quote.audience_key,
         eligibility_required=bool(quote.eligibility_required),
-        is_public_market=bool(product.store_record.comparison_enabled) if product.store_record is not None else True,
+        is_public_market=(
+            bool(product.store_record.comparison_enabled)
+            and not bool(quote.eligibility_required)
+            if product.store_record is not None
+            else not bool(quote.eligibility_required)
+        ),
     )
 
 
@@ -304,17 +360,18 @@ def search_products(
 
     quotes_by_product: dict[int, list[ProductPriceQuote]] = {}
     context_stats: dict[tuple[int, str, str], PriceContextStatistic] = {}
-    if price_mode == "personal" and product_ids:
+    if product_ids:
         for quote in session.scalars(
             select(ProductPriceQuote).where(ProductPriceQuote.product_id.in_(product_ids))
         ):
             quotes_by_product.setdefault(int(quote.product_id), []).append(quote)
-        context_stats = {
-            (int(row.product_id), row.price_type, row.audience_key): row
-            for row in session.scalars(
-                select(PriceContextStatistic).where(PriceContextStatistic.product_id.in_(product_ids))
-            )
-        }
+        if price_mode == "personal":
+            context_stats = {
+                (int(row.product_id), row.price_type, row.audience_key): row
+                for row in session.scalars(
+                    select(PriceContextStatistic).where(PriceContextStatistic.product_id.in_(product_ids))
+                )
+            }
 
     results: list[SearchResult] = []
     for score, master, products in selected_scored:
@@ -329,7 +386,9 @@ def search_products(
                 if offer is None:
                     continue
             else:
-                offer = _offer_from_product(product)
+                offer = _public_offer_from_product(product, quotes_by_product.get(int(product.id), []))
+                if offer is None:
+                    continue
             store_key: int | str = product.store_id or product.store
             current = cheapest_by_store.get(store_key)
             if current is None or offer.price < current.price:

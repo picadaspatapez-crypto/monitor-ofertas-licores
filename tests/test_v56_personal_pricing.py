@@ -61,7 +61,7 @@ def _save_pair(session):
         session,
         name="CAV",
         key="cav",
-        comparison_enabled=False,
+        comparison_enabled=True,
         personal_comparison_enabled=True,
     )
     run_public = ScrapeRun(store_id=public.id, status="running")
@@ -108,10 +108,10 @@ def _save_pair(session):
     return public, cav, public_saved.product, cav_saved.product
 
 
-def test_cav_is_personal_source_not_public_market():
+def test_cav_is_hybrid_public_and_personal_source():
     from app.collectors.cav import CAVCollector
 
-    assert CAVCollector.metadata.comparison_enabled is False
+    assert CAVCollector.metadata.comparison_enabled is True
     assert CAVCollector.metadata.personal_comparison_enabled is True
     assert CAVCollector.metadata.diagnostic_mode is False
 
@@ -137,7 +137,7 @@ def test_context_history_keeps_member_and_public_prices_separate():
     engine.dispose()
 
 
-def test_public_search_excludes_cav_and_personal_search_uses_member_price():
+def test_public_search_uses_cav_public_price_and_personal_search_uses_member_price():
     engine, SessionLocal = _session_factory()
     with SessionLocal() as session:
         _save_pair(session)
@@ -151,7 +151,10 @@ def test_public_search_excludes_cav_and_personal_search_uses_member_price():
             eligible_audiences=("cav_member",),
         )
         assert public
-        assert [offer.store_name for offer in public[0].offers] == ["La Vinoteca"]
+        assert [offer.store_name for offer in public[0].offers] == ["La Vinoteca", "CAV"]
+        cav_public = next(offer for offer in public[0].offers if offer.store_name == "CAV")
+        assert cav_public.price == 26000
+        assert cav_public.price_type == "PUBLIC"
         assert personal
         assert personal[0].winner.store_name == "CAV"
         assert personal[0].winner.price == 21000

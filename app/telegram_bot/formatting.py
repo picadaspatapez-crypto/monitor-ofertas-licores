@@ -48,7 +48,8 @@ def help_message(bot_username: str | None = None) -> str:
         f"<code>/avisar johnnie black 750 bajo 25000</code>\n"
         f"<code>/misfavoritos</code>\n"
         f"<code>/eliminarfavorito 3</code>\n\n"
-        f"Estado de collectors: <code>/estado</code>.\n\n"
+        f"Estado de collectors: <code>/estado</code>.\n"
+        f"Calidad de datos: <code>/quality</code>.\n\n"
         f"El bot consulta PostgreSQL; no abre las tiendas en cada búsqueda."
     )
 
@@ -98,6 +99,36 @@ def no_results_message(query: str) -> str:
 
 def unauthorized_message() -> str:
     return "🔒 Este bot es privado y este chat no está autorizado."
+
+
+
+
+def quality_message(rows: list[Any], *, blocked: int, warnings: int, limit: int = 10) -> str:
+    """Resumen Telegram de incidentes del Data Quality Engine."""
+    lines = [
+        "🧪 <b>Calidad de datos</b>",
+        "",
+        f"🔴 Bloqueadas: <b>{int(blocked)}</b>",
+        f"🟡 Advertencias: <b>{int(warnings)}</b>",
+    ]
+    if not rows:
+        lines.extend(["", "✅ No hay publicaciones con incidentes activos."])
+        return "\n".join(lines)
+
+    lines.extend(["", f"Mostrando hasta {min(limit, len(rows))} incidentes:", ""])
+    for index, product in enumerate(rows[:limit], start=1):
+        status = str(getattr(product, "data_quality_status", "WARNING") or "WARNING").upper()
+        icon = "🔴" if status == "BLOCKED" else "🟡"
+        issues = list(getattr(product, "data_quality_issues", None) or [])
+        issue_text = ", ".join(str(value) for value in issues[:4]) or "sin detalle"
+        price = int(getattr(product, "current_price", 0) or 0)
+        lines.extend([
+            f"{index}. {icon} <b>{_escape(getattr(product, 'name', 'Sin nombre'))}</b>",
+            f"   {_escape(getattr(product, 'store', 'Tienda'))} · score {int(getattr(product, 'data_quality_score', 0) or 0)}/100 · {format_clp(price)}",
+            f"   {_escape(issue_text)}",
+        ])
+    lines.extend(["", "El panel completo también está disponible en la web: <b>Calidad</b>."])
+    return "\n".join(lines)
 
 
 def status_message(

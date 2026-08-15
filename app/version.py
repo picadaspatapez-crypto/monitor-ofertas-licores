@@ -1,3 +1,3 @@
-__version__ = "5.7.0"
+__version__ = "5.7.1"
 APP_VERSION = __version__
-RELEASE_NAME = "Canonical Catalog & Matching 2.0"
+RELEASE_NAME = "Quality Command & CAV Public Market"

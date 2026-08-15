@@ -75,7 +75,7 @@ def test_cav_parser_separates_member_sale_and_public_prices():
     products, cards = parse_cav_html(html)
     assert cards == 1
     product = next(iter(products.values()))
-    assert product.current_price == 20990  # precio base diagnóstico = normal
+    assert product.current_price == 19990  # precio público vigente = oferta
     assert product.sku == "32531"
     quotes = {(q.price_type, q.audience_key): q.price for q in product.price_quotes}
     assert quotes[("PUBLIC", "public")] == 20990
@@ -143,12 +143,12 @@ def test_personal_preview_can_use_cav_without_changing_public_store_flag():
     engine.dispose()
 
 
-def test_cav_registry_is_personal_and_lavinoteca_is_public():
+def test_cav_registry_is_hybrid_public_and_personal():
     from app.collectors.registry import enabled_collectors
     by_key = {collector.key: collector for collector in enabled_collectors()}
     assert by_key["lavinoteca"].metadata.comparison_enabled is True
     assert by_key["lavinoteca"].metadata.diagnostic_mode is False
-    assert by_key["cav"].metadata.comparison_enabled is False
+    assert by_key["cav"].metadata.comparison_enabled is True
     assert by_key["cav"].metadata.diagnostic_mode is False
     assert by_key["cav"].metadata.personal_comparison_enabled is True
 
@@ -177,6 +177,6 @@ def test_lavinoteca_parses_vtex_content_range_total():
 def test_cav_personal_source_requires_browser_rendering():
     from app.collectors.cav import CAVCollector
     assert CAVCollector.metadata.requires_browser is True
-    assert CAVCollector.metadata.comparison_enabled is False
+    assert CAVCollector.metadata.comparison_enabled is True
     assert CAVCollector.metadata.diagnostic_mode is False
     assert CAVCollector.metadata.personal_comparison_enabled is True

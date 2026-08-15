@@ -51,6 +51,8 @@ def parse_command(text: str | None) -> BotCommand:
         return BotCommand("search", query) if query else BotCommand("search_help")
     if command == "/estado":
         return BotCommand("status")
+    if command in {"/quality", "/calidad"}:
+        return BotCommand("quality")
     if command == "/mas":
         return BotCommand("search_more")
     if command == "/historial":

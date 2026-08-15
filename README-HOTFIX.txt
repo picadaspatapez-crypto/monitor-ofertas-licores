@@ -1,14 +1,15 @@
-v5.7.0 — Canonical Catalog & Matching 2.0
+v5.7.1 — Quality Command & CAV Public Market
 
-BASE: v5.6.1
+BASE REQUIRED: v5.7.0
 
-1. Haz respaldo de PostgreSQL.
-2. Copia el contenido de este ZIP sobre la raíz de tu repositorio v5.6.1.
-3. Reemplaza los archivos existentes cuando corresponda.
-4. Haz commit + push y espera el deploy de Railway.
-5. Confirma que Alembic queda en 0011_canonical_matching_quality.
-6. Ejecuta un solo Run now para poblar calidad/catálogo canónico.
-7. Revisa /quality y /matching/review en el buscador privado.
+Apply the contents of this ZIP over the repository root, preserving paths and replacing existing files.
 
-Este hotfix NO cambia collectors, frecuencia de ejecución, límite de 25 minutos ni
-configuración CAV. Se concentra en identidad, matching y calidad de datos.
+WHAT IT FIXES
+1) /quality now works directly in Telegram. /calidad is an alias.
+2) CAV becomes a hybrid source:
+   - PUBLIC comparator: only PUBLIC/SALE prices that do not require eligibility.
+   - PERSONAL comparator: MEMBER/cav_member remains available.
+3) A CAV member-only price can never leak into the public comparator.
+4) No database migration is required.
+
+After deployment, run once manually so the store metadata is synchronized and CAV is marked comparison_enabled=true in PostgreSQL.
