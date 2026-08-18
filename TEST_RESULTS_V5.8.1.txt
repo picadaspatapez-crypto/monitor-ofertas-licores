@@ -1,0 +1,14 @@
+v5.8.1 — Commercial Radar Visibility Hotfix
+
+Hotfix aplicado sobre una copia limpia de v5.8.0:
+195 passed
+
+Pruebas específicas añadidas:
+- /radar devuelve oportunidades verificadas aunque no exista señal excepcional.
+- /minimos devuelve productos más cercanos al mínimo si no hay NEW/AT/NEAR_HISTORICAL_MIN.
+- Telegram muestra mínimo histórico y distancia porcentual en el fallback.
+
+Alertas automáticas: umbrales v5.8.0 sin cambios.
+Python compileall: OK
+Alembic head: 0012_commercial_intelligence
+Migraciones nuevas: ninguna

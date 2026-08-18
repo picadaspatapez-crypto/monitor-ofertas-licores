@@ -318,10 +318,14 @@ def format_opportunities(
                 f"<b>{index}. {_escape(view.canonical_name)}</b>",
                 f"Score: <b>{view.score:.0f}/100</b> · {_escape(view.classification)}",
                 f"🥇 {_escape(view.winner_store)}: <b>{format_clp(view.winner_price)}</b>",
-                f"Ahorro: <b>{format_clp(view.saving_clp)}</b> ({view.saving_pct * 100:.1f}%)",
-                f"Confianza: {view.confidence * 100:.0f}%",
             ]
         )
+        if view.saving_clp > 0:
+            lines.append(
+                f"Ahorro vs. segundo precio: <b>{format_clp(view.saving_clp)}</b> "
+                f"({view.saving_pct * 100:.1f}%)"
+            )
+        lines.append(f"Confianza: {view.confidence * 100:.0f}%")
         signal = _commercial_event_text(getattr(view, "price_event", "NORMAL"))
         if signal:
             lines.append(f"Señal: <b>{_escape(signal)}</b>")
@@ -334,6 +338,14 @@ def format_opportunities(
         reason = getattr(view, "intelligence_reason", None)
         if reason and signal:
             lines.append(f"Motivo: {_escape(reason)}")
+        if view.historical_min:
+            distance_floor = (view.winner_price - view.historical_min) / view.historical_min
+            lines.append(f"Mínimo histórico: <b>{format_clp(view.historical_min)}</b>")
+            lines.append(f"Distancia al mínimo: <b>{distance_floor * 100:+.1f}%</b>")
+        elif view.min_90d:
+            distance_90 = (view.winner_price - view.min_90d) / view.min_90d
+            lines.append(f"Mínimo 90 días: <b>{format_clp(view.min_90d)}</b>")
+            lines.append(f"Distancia al mínimo 90 d: <b>{distance_90 * 100:+.1f}%</b>")
         if view.avg_90d:
             difference = (view.winner_price - view.avg_90d) / view.avg_90d
             lines.append(f"Vs. promedio 90 d: {difference * 100:+.1f}%")

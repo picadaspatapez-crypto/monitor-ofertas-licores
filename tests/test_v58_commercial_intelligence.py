@@ -216,3 +216,115 @@ def test_rare_offer_alerts_after_real_price_drop():
     assert len(bundles) == 1
     assert bundles[0].alert_type == "commercial_rare_offer"
     assert bundles[0].deduplication_key == "commercial:rare-offer:10:10000"
+
+
+def _seed_snapshot(session, *, score: float = 60.0, event: str = "NORMAL", winner_price: int = 10500, historical_min: int = 10000):
+    from app.models import MasterPriceStatistic, OpportunitySnapshot
+
+    store = Store(
+        name="Fallback Store",
+        slug="fallback-store",
+        base_url="https://fallback.example",
+        connector_key="fallback-store",
+        is_active=True,
+        comparison_enabled=True,
+    )
+    master = MasterProduct(
+        canonical_name="Whisky Fallback 750 ml",
+        normalized_key="whisky-fallback|750",
+    )
+    session.add_all([store, master])
+    session.flush()
+    product = Product(
+        store="Fallback Store",
+        store_id=store.id,
+        master_product_id=master.id,
+        name="Whisky Fallback 750 ml",
+        url="https://fallback.example/p",
+        current_price=winner_price,
+        is_available=True,
+        excluded_from_comparison=False,
+    )
+    session.add(product)
+    session.flush()
+    session.add(
+        MasterPriceStatistic(
+            master_product_id=master.id,
+            current_best_price=winner_price,
+            min_90d=historical_min,
+            avg_90d=float(historical_min + 1000),
+            historical_min=historical_min,
+            observations_total=20,
+            observations_90d=20,
+        )
+    )
+    session.add(
+        OpportunitySnapshot(
+            master_product_id=master.id,
+            score=score,
+            classification="Normal",
+            winner_product_id=product.id,
+            winner_store_id=store.id,
+            winner_price=winner_price,
+            saving_clp=500,
+            saving_pct=0.05,
+            match_confidence=0.95,
+            price_event=event,
+            calculated_at=utcnow(),
+        )
+    )
+    session.flush()
+    return master, product
+
+
+def test_radar_interactive_falls_back_when_no_exceptional_signal():
+    from app.intelligence.queries import commercial_radar
+
+    engine, SessionLocal = _session_factory()
+    with SessionLocal() as session:
+        _seed_snapshot(session, score=60.0, event="NORMAL")
+        rows = commercial_radar(session, limit=10, minimum_score=70.0)
+        assert len(rows) == 1
+        assert rows[0].canonical_name == "Whisky Fallback 750 ml"
+        assert rows[0].price_event == "NORMAL"
+    engine.dispose()
+
+
+def test_minimos_interactive_falls_back_to_closest_historical_floor():
+    from app.intelligence.queries import historical_floor_opportunities
+
+    engine, SessionLocal = _session_factory()
+    with SessionLocal() as session:
+        _seed_snapshot(
+            session,
+            score=58.0,
+            event="NORMAL",
+            winner_price=10500,
+            historical_min=10000,
+        )
+        rows = historical_floor_opportunities(session, limit=10)
+        assert len(rows) == 1
+        assert rows[0].historical_min == 10000
+        assert rows[0].winner_price == 10500
+    engine.dispose()
+
+
+def test_opportunity_format_displays_historical_distance_for_fallback():
+    from app.intelligence.queries import historical_floor_opportunities
+    from app.telegram_bot.formatting import format_opportunities
+
+    engine, SessionLocal = _session_factory()
+    with SessionLocal() as session:
+        _seed_snapshot(
+            session,
+            score=58.0,
+            event="NORMAL",
+            winner_price=10500,
+            historical_min=10000,
+        )
+        rows = historical_floor_opportunities(session, limit=10)
+        text, _ = format_opportunities(rows, title="Precios más cercanos a su mínimo histórico")
+        assert "Mínimo histórico" in text
+        assert "Distancia al mínimo" in text
+        assert "+5.0%" in text
+    engine.dispose()

@@ -271,14 +271,29 @@ class TelegramSearchBot:
                         if command.name == "commercial_radar"
                         else historical_floor_opportunities(session, limit=15)
                     )
-                text, markup = format_opportunities(
-                    views,
-                    title=(
-                        "Radar comercial · Opportunity Score v2"
-                        if command.name == "commercial_radar"
-                        else "Precios en o cerca del mínimo histórico"
-                    ),
-                )
+                if command.name == "commercial_radar":
+                    strict_signal = any(
+                        getattr(view, "price_event", "NORMAL") != "NORMAL"
+                        and float(getattr(view, "score", 0.0) or 0.0) >= 70.0
+                        for view in views
+                    )
+                    title = (
+                        "Radar comercial · señales verificadas"
+                        if strict_signal
+                        else "Radar comercial · mejores oportunidades actuales"
+                    )
+                else:
+                    strict_floor = any(
+                        getattr(view, "price_event", "NORMAL")
+                        in {"NEW_HISTORICAL_MIN", "AT_HISTORICAL_MIN", "NEAR_HISTORICAL_MIN"}
+                        for view in views
+                    )
+                    title = (
+                        "Precios en o cerca del mínimo histórico"
+                        if strict_floor
+                        else "Precios más cercanos a su mínimo histórico"
+                    )
+                text, markup = format_opportunities(views, title=title)
             except Exception as exc:
                 print(f"BOT commercial radar error ({type(exc).__name__}: {exc}).", flush=True)
                 text, markup = "⚠️ No pude consultar la inteligencia comercial.", None

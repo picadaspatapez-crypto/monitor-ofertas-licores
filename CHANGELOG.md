@@ -1,3 +1,11 @@
+## v5.8.1 — Commercial Radar Visibility Hotfix
+
+- `/radar` conserva primero las señales estrictas y, si no existen, muestra las mejores oportunidades verificadas disponibles.
+- `/minimos` conserva NEW/AT/NEAR_HISTORICAL_MIN y, si no hay resultados, muestra los productos más cercanos a su mínimo histórico.
+- Telegram muestra mínimo histórico y distancia porcentual en los resultados comerciales.
+- Las alertas automáticas mantienen los umbrales estrictos de v5.8.0.
+- Sin migraciones ni cambios en collectors, CAV, matching o scheduler.
+
 # v5.8.0 — Commercial Intelligence 2.0
 
 - Introduce Opportunity Score v2 con pesos 30/25/15/15/10/5 para mercado, histórico, rareza, matching, frescura y escasez.

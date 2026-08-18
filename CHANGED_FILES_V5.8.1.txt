@@ -1,0 +1,11 @@
+app/version.py
+app/intelligence/queries.py
+app/telegram_bot/worker.py
+app/telegram_bot/formatting.py
+tests/test_v58_commercial_intelligence.py
+tests/test_version.py
+tests/test_search_ui.py
+CHANGELOG.md
+DEPLOY_V5.8.1.md
+README-HOTFIX.txt
+TEST_RESULTS_V5.8.1.txt

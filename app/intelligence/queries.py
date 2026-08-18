@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import desc, select
+from sqlalchemy import Float, cast, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -135,6 +135,18 @@ def commercial_radar(
     limit: int = 10,
     minimum_score: float = 70.0,
 ) -> list[OpportunityView]:
+    """Radar comercial con degradación útil cuando no hay señales excepcionales.
+
+    v5.8.0 exigía simultáneamente una señal comercial especial y score >= 70.
+    Ese filtro era correcto para alertas automáticas, pero demasiado estricto para
+    un comando interactivo: en mercados estables podía devolver cero filas aunque
+    existieran comparaciones verificadas.
+
+    La consulta interactiva conserva primero el criterio estricto. Si no hay
+    resultados, muestra oportunidades verificadas con score >= 55 y, como último
+    recurso, las mejores comparaciones disponibles. Las alertas automáticas NO usan
+    este fallback y mantienen sus umbrales originales.
+    """
     events = (
         "NEW_HISTORICAL_MIN",
         "RARE_OFFER",
@@ -142,11 +154,18 @@ def commercial_radar(
         "NEAR_HISTORICAL_MIN",
         "MARKET_LEADER",
     )
-    return _views(
+    strict = _views(
         session,
         _statement(minimum_score=minimum_score, events=events, order="score"),
         limit=limit,
     )
+    if strict:
+        return strict
+
+    useful = top_opportunities(session, limit=limit, minimum_score=55.0, order="score")
+    if useful:
+        return useful
+    return top_opportunities(session, limit=limit, minimum_score=0.0, order="score")
 
 
 def historical_floor_opportunities(
@@ -154,10 +173,42 @@ def historical_floor_opportunities(
     *,
     limit: int = 10,
 ) -> list[OpportunityView]:
+    """Productos en el piso histórico o, si no hay ninguno, los más cercanos.
+
+    El modo estricto conserva NEW/AT/NEAR_HISTORICAL_MIN. Cuando el mercado está
+    estable y ninguno cae dentro del 3 %, el comando sigue siendo útil ordenando
+    las comparaciones por distancia absoluta al mínimo histórico.
+    """
     events = ("NEW_HISTORICAL_MIN", "AT_HISTORICAL_MIN", "NEAR_HISTORICAL_MIN")
     statement = _statement(minimum_score=0.0, events=events, order="score").order_by(None).order_by(
         desc(OpportunitySnapshot.historical_gap_pct),
         desc(OpportunitySnapshot.score),
         MasterProduct.canonical_name,
     )
-    return _views(session, statement, limit=limit)
+    strict = _views(session, statement, limit=limit)
+    if strict:
+        return strict
+
+    distance = func.abs(
+        (
+            cast(OpportunitySnapshot.winner_price, Float)
+            - cast(MasterPriceStatistic.historical_min, Float)
+        )
+        / cast(MasterPriceStatistic.historical_min, Float)
+    )
+    nearest = (
+        _statement(minimum_score=0.0, events=None, order="score")
+        .where(
+            OpportunitySnapshot.winner_price.is_not(None),
+            MasterPriceStatistic.historical_min.is_not(None),
+            MasterPriceStatistic.historical_min > 0,
+            MasterPriceStatistic.observations_total >= 2,
+        )
+        .order_by(None)
+        .order_by(
+            distance,
+            desc(OpportunitySnapshot.score),
+            MasterProduct.canonical_name,
+        )
+    )
+    return _views(session, nearest, limit=limit)

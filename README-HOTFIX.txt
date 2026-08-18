@@ -1,30 +1,13 @@
-HOTFIX v5.8.0 — Commercial Intelligence 2.0
+v5.8.1 — Commercial Radar Visibility Hotfix
 
-BASE REQUERIDA
-v5.7.1 — Quality Command & CAV Public Market
+Aplicar sobre v5.8.0.
 
-APLICACIÓN
-1. Crear respaldo de PostgreSQL.
-2. Copiar el contenido de este hotfix sobre la raíz del repositorio v5.7.1.
-3. Reemplazar los archivos existentes conservando las rutas.
-4. Commit + push.
-5. Confirmar que Railway ejecuta `alembic upgrade head` y queda en `0012_commercial_intelligence`.
-6. Ejecutar un único Run now después de un deployment exitoso.
+Corrige la experiencia de /radar y /minimos cuando los filtros estrictos de v5.8.0 no encuentran señales excepcionales.
 
-QUÉ CAMBIA
-- Opportunity Score v2.
-- Frecuencia de piso de 90 días.
-- Nuevo mínimo histórico comparado contra el historial previo al run actual.
-- Señales comerciales explicables.
-- Alertas deduplicadas para nuevos mínimos y ofertas raras con baja real.
-- Telegram /radar, /inteligencia y /minimos.
-- Badges comerciales en el buscador web.
-
-QUÉ NO CAMBIA
-- Collectors.
-- Scheduler.
-- Máximo de workers y límite por collector.
-- Matching 2.0 / Data Quality.
-- Política híbrida pública/personal de CAV.
-
-Consulta DEPLOY_V5.8.md antes de desplegar.
+IMPORTANTE:
+- Las alertas automáticas siguen siendo estrictas.
+- /radar usa fallback interactivo a oportunidades verificadas.
+- /minimos usa fallback a los productos más cercanos a su mínimo histórico.
+- No hay migraciones.
+- No se tocan collectors ni CAV.
+- No requiere Run now después del deploy.
