@@ -129,6 +129,16 @@ def _augmented_candidates(session: Session, products: list[Product], plan) -> tu
         for right in products[index + 1 :]:
             key_pair = tuple(sorted((keys[int(left.id)], keys[int(right.id)])))
             if key_pair in equivalences:
+                # Una regla manual puede corregir aliases/nombres, pero nunca debe
+                # convertir un pack en botella individual. La identidad estructural
+                # tiene precedencia sobre cualquier equivalencia persistida.
+                left_sig = signatures[int(left.id)]
+                right_sig = signatures[int(right.id)]
+                if left_sig.is_pack or right_sig.is_pack:
+                    continue
+                structural = compare_signatures(left_sig, right_sig, minimum_confidence=0.0)
+                if structural.method in {"volume_conflict", "vintage_conflict", "abv_conflict", "excluded_pack"}:
+                    continue
                 add_pair(left, right, confidence=1.0, method="manual_equivalence")
 
     return tuple(sorted(candidates.values(), key=lambda item: (item.left_id, item.right_id)))

@@ -1,11 +1,14 @@
-v5.8.2 — Pack Identity Guard Hotfix
+v5.8.3 — Canonical Pack Repair & Economic Sanity Guard
 
-APLICAR SOBRE: v5.8.1 — Commercial Radar Visibility Hotfix
+BASE REQUERIDA: v5.8.2 Pack Identity Guard
 
-Este ZIP corrige comparaciones entre multipacks y botellas individuales. Reconoce formatos como X6 750 ml y 750cc x6, añade defensas en comparador/históricos/radar y repara package_quantity antiguo al recalcular inteligencia comercial.
+Aplicación:
+1. Respalda PostgreSQL.
+2. Copia TODO el contenido de esta carpeta sobre la raíz del repositorio v5.8.2.
+3. Reemplaza archivos cuando se solicite.
+4. Commit + push a Railway.
+5. Después del deploy, ejecuta un único Run now.
 
-No agrega migraciones. Alembic permanece en 0012_commercial_intelligence.
+No hay migraciones nuevas. Alembic sigue en 0012_commercial_intelligence.
 
-Después del deploy ejecutar UN SOLO Run now para sanear metadatos, matching, históricos y Opportunity Snapshots existentes.
-
-Ver DEPLOY_V5.8.2.md para instrucciones.
+Este hotfix corrige el caso en que un master histórico seguía mezclando un pack X6/X24 con una botella individual aun después de que v5.8.2 reconociera correctamente el título.

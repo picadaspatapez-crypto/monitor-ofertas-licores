@@ -1,3 +1,3 @@
-__version__ = "5.8.2"
+__version__ = "5.8.3"
 APP_VERSION = __version__
-RELEASE_NAME = "Pack Identity Guard Hotfix"
+RELEASE_NAME = "Canonical Pack Repair & Economic Sanity Guard"

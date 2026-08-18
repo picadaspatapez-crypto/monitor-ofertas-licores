@@ -298,6 +298,17 @@ def analyze_cross_store_prices(
     verified_matches = 0
 
     for master_id, group_products in by_master.items():
+        master = masters.get(master_id)
+        # Fail closed if the canonical identity itself still looks like a pack.
+        # v5.8.3 repairs these groups earlier in the pipeline, but this independent
+        # guard prevents a stale/partially repaired master from reaching Radar.
+        if master is not None and (
+            int(getattr(master, "package_quantity", 1) or 1) > 1
+            or build_product_signature(master.canonical_name or "").is_pack
+        ):
+            unverified_groups += 1
+            continue
+
         cheapest_by_store: dict[int, Product] = {}
         for product in group_products:
             store_id = int(product.store_id)
@@ -331,14 +342,26 @@ def analyze_cross_store_prices(
                         or right_match.matching_method in trusted_methods
                     )
                 )
+                left_signature = build_product_signature(left.name)
+                right_signature = build_product_signature(right.name)
+                structural = compare_signatures(
+                    left_signature, right_signature, minimum_confidence=0.0
+                )
+                # EAN/manual history may raise confidence, but never overrides an
+                # impossible package/volume/vintage/ABV identity conflict.
+                if structural.method in {
+                    "excluded_pack", "volume_conflict", "vintage_conflict", "abv_conflict"
+                }:
+                    verified = False
+                    break
                 if trusted:
                     pair_confidences.append(
                         min(float(left_match.confidence), float(right_match.confidence))
                     )
                     continue
                 score = compare_signatures(
-                    build_product_signature(left.name),
-                    build_product_signature(right.name),
+                    left_signature,
+                    right_signature,
                     minimum_confidence=minimum_confidence,
                 )
                 if not score.accepted:
@@ -381,6 +404,21 @@ def analyze_cross_store_prices(
                 key=lambda offer: (offer.price, offer.store_name.casefold()),
             )
         )
+        # Last-resort economic sanity guard. A >=4x price ratio between the two
+        # cheapest supposedly identical bottles is almost always a hidden pack or
+        # malformed identity. Exact shared EAN is the only automatic override.
+        if len(offers) >= 2 and offers[0].price > 0:
+            ratio = offers[1].price / offers[0].price
+            eans = [
+                (product.ean or "").strip()
+                for product in selected
+                if (product.ean or "").strip()
+            ]
+            exact_shared_ean = len(eans) == len(selected) and len(set(eans)) == 1
+            if ratio >= 4.0 and not exact_shared_ean:
+                unverified_groups += 1
+                continue
+
         verified_matches += 1
         is_tie = len(offers) > 1 and offers[0].price == offers[1].price
         if is_tie:
@@ -413,7 +451,6 @@ def analyze_cross_store_prices(
             and previous_winner_store_id is not None
             and winner.store_id != previous_winner_store_id
         )
-        master = masters.get(master_id)
         canonical_name = (
             master.canonical_name if master is not None else offers[0].product_name
         )

@@ -1,0 +1,17 @@
+app/analyzers/comparison.py
+app/intelligence/__init__.py
+app/intelligence/canonical.py
+app/intelligence/pack_guard.py
+app/intelligence/personal.py
+app/intelligence/queries.py
+app/pipeline/runner.py
+app/repositories/matching.py
+app/version.py
+tests/test_v583_canonical_pack_repair.py
+tests/test_search_ui.py
+tests/test_version.py
+DEPLOY_V5.8.3.md
+docs/V5.8.3_CANONICAL_PACK_REPAIR.md
+TEST_RESULTS_V5.8.3.txt
+CHANGELOG.md
+README-HOTFIX.txt

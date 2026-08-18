@@ -1,0 +1,12 @@
+v5.8.3 — Canonical Pack Repair & Economic Sanity Guard
+
+Full suite: 204 passed
+Focused v5.8.3 suite: 4 passed
+Python compileall: OK
+Alembic head expected: 0012_commercial_intelligence (sin migraciones nuevas)
+
+Casos nuevos cubiertos:
+- Radar oculta master canónico X6 aunque el winner sea botella individual.
+- Reparación separa un master legado mixto pack/botella.
+- Ratio >= 4x se pone en cuarentena sin EAN compartido.
+- Ratio >= 4x puede mantenerse cuando todas las ofertas comparten EAN exacto.

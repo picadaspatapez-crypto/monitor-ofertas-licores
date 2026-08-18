@@ -96,11 +96,26 @@ def refresh_canonical_catalog(session: Session, master_ids: set[int] | None = No
         group = by_master.get(int(master.id), [])
         if not group:
             continue
-        best = max(group, key=lambda item: (int(item.data_quality_score or 0), len(item.name or "")))
+        # Never let a longer multipack title become the display identity of a
+        # canonical single-bottle group. Legacy versions could leave an X6/X24
+        # alias attached to a master even after the pack itself was excluded.
+        single_group = [
+            item
+            for item in group
+            if int(item.package_quantity or 1) == 1
+            and not build_product_signature(item.name or "").is_pack
+        ]
+        candidates = single_group or group
+        best = max(
+            candidates,
+            key=lambda item: (int(item.data_quality_score or 0), len(item.name or "")),
+        )
         fingerprint = canonical_fingerprint(best.name)
         sig = build_product_signature(best.name)
+        normalized = normalize_product_name(best.name)
         changed = False
         for attr, value in (
+            ("canonical_name", normalized.canonical_name),
             ("canonical_fingerprint", fingerprint),
             ("brand", sig.brand or master.brand),
             ("volume_ml", sig.volume_ml or master.volume_ml),

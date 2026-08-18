@@ -22,6 +22,7 @@ from app.intelligence import (
     refresh_context_price_statistics,
     refresh_personal_opportunities,
     refresh_canonical_for_runs,
+    repair_pack_identity,
     summarize_quality_for_runs,
 )
 from app.models import ScrapeRun, Store
@@ -848,6 +849,7 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
     try:
         with SessionLocal() as session:
             quality = summarize_quality_for_runs(session, run_ids)
+            pack_repair = repair_pack_identity(session)
             matching = reconcile_cross_store_matches(
                 session,
                 run_ids=run_ids,
@@ -895,6 +897,8 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Productos reagrupados.....: {matching.products_relinked}", flush=True)
         print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
         print(f"Calidad CLEAN/WARN/BLOCK..: {quality.clean}/{quality.warnings}/{quality.blocked}", flush=True)
+        print(f"Pack identities reparadas.: {pack_repair.mixed_masters_found} masters; {pack_repair.products_relinked} productos", flush=True)
+        print(f"Snapshots pack purgados....: {pack_repair.snapshots_purged}", flush=True)
         print(f"Revisión matching nueva...: {matching.review_candidates}", flush=True)
         print(f"Revisión matching pendiente: {matching.review_pending}", flush=True)
         print(f"Maestros canónicos actual.: {canonical.masters_updated}", flush=True)

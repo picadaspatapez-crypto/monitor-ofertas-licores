@@ -366,3 +366,11 @@ v5.1.8 — Trusted Partial Catalog Persistence
 - + Vista personal `/personal` separada del comparador público.
 - + Aislamiento de fuentes diagnósticas en buscador, histórico, favoritos y salida operativa.
 - + Migración Alembic `0009_price_contexts`.
+
+## v5.8.3 — Canonical Pack Repair & Economic Sanity Guard
+- Repara masters históricos que mezclaron multipacks y botellas individuales.
+- Regenera identidad canónica desde botellas individuales válidas.
+- Purga snapshots comerciales contaminados y los recalcula en el mismo ciclo.
+- Equivalencias manuales/EAN ya no pueden sobrepasar conflictos estructurales de pack/volumen/añada/ABV.
+- `/radar` y `/minimos` aplican guardia adicional sobre el nombre canónico.
+- Añade cuarentena económica para diferencias >=4x salvo EAN idéntico.

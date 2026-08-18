@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import Float, cast, desc, func, select
 from sqlalchemy.orm import Session
 
+from app.matching import build_product_signature
 from app.models import (
     MasterPriceStatistic,
     MasterProduct,
@@ -68,6 +69,7 @@ def _statement(*, minimum_score: float, events: tuple[str, ...] | None, order: s
             Product.is_available.is_(True),
             Product.excluded_from_comparison.is_(False),
             Product.package_quantity == 1,
+            MasterProduct.package_quantity == 1,
             Store.is_active.is_(True),
         )
         .order_by(*ordering, MasterProduct.canonical_name)
@@ -79,9 +81,17 @@ def _statement(*, minimum_score: float, events: tuple[str, ...] | None, order: s
 
 def _views(session: Session, statement, *, limit: int) -> list[OpportunityView]:
     views: list[OpportunityView] = []
+    fetch_limit = max(1, min(int(limit), 30)) * 5
     for snapshot, master, product, store, stats in session.execute(
-        statement.limit(max(1, min(int(limit), 30)))
+        statement.limit(fetch_limit)
     ):
+        # Independent presentation guard: a stale canonical name containing X6/X24
+        # must never surface in /radar or /minimos even if an older snapshot survived
+        # an interrupted run.
+        if build_product_signature(master.canonical_name or "").is_pack:
+            continue
+        if build_product_signature(product.name or "").is_pack:
+            continue
         views.append(
             OpportunityView(
                 master_product_id=int(master.id),
@@ -113,6 +123,8 @@ def _views(session: Session, statement, *, limit: int) -> list[OpportunityView]:
                 intelligence_reason=getattr(snapshot, "intelligence_reason", None),
             )
         )
+        if len(views) >= max(1, min(int(limit), 30)):
+            break
     return views
 
 

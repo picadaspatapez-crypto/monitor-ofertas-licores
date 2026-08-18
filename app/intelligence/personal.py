@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.intelligence.opportunity import OpportunityComponents, classify_opportunity, opportunity_score
+from app.matching import build_product_signature
 from app.models import (
     MasterProduct,
     PersonalOpportunitySnapshot,
@@ -247,6 +248,7 @@ def top_personal_opportunities(
             Product.is_available.is_(True),
             Product.excluded_from_comparison.is_(False),
             Product.package_quantity == 1,
+            MasterProduct.package_quantity == 1,
             Store.is_active.is_(True),
             PersonalOpportunitySnapshot.score >= float(minimum_score),
         )
@@ -257,8 +259,13 @@ def top_personal_opportunities(
         )
         .limit(max(1, min(int(limit), 30)))
     )
-    return [
-        PersonalOpportunityView(
+    views: list[PersonalOpportunityView] = []
+    for snapshot, master, product, store in session.execute(statement):
+        if build_product_signature(master.canonical_name or "").is_pack:
+            continue
+        if build_product_signature(product.name or "").is_pack:
+            continue
+        views.append(PersonalOpportunityView(
             master_product_id=int(master.id),
             canonical_name=master.canonical_name,
             score=float(snapshot.score),
@@ -278,6 +285,5 @@ def top_personal_opportunities(
             personal_advantage_pct=float(snapshot.personal_advantage_pct or 0.0),
             history_position=float(snapshot.history_position or 0.5),
             url=product.url,
-        )
-        for snapshot, master, product, store in session.execute(statement)
-    ]
+        ))
+    return views
