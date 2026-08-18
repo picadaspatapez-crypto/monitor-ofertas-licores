@@ -1,0 +1,17 @@
+app/matching/cross_store.py
+app/analyzers/comparison.py
+app/intelligence/history.py
+app/intelligence/queries.py
+app/intelligence/personal.py
+app/version.py
+tests/test_v582_pack_identity_guard.py
+tests/test_search_ui.py
+tests/test_version.py
+CHANGELOG.md
+ROADMAP.md
+DEPLOY_V5.8.2.md
+docs/V5.8.2_PACK_IDENTITY_GUARD.md
+TEST_RESULTS_V5.8.2.txt
+README-HOTFIX.txt
+CHANGED_FILES_V5.8.2.txt
+SHA256SUMS.txt

@@ -1,0 +1,26 @@
+v5.8.2 — Pack Identity Guard Hotfix
+
+Suite completa:
+200 passed
+
+Suite focalizada pack/matching/commercial:
+25 passed
+
+Python compileall:
+OK
+
+Alembic head:
+0012_commercial_intelligence
+
+Migraciones nuevas:
+ninguna
+
+Casos explícitos validados:
+- X6 750 ml => pack_count=6
+- x 6 750 ml => pack_count=6
+- 1000 ml X6 => pack_count=6
+- 700cc x6 => pack_count=6
+- botella individual 750 ml => no pack
+- match antiguo/manual no puede forzar pack vs botella
+- precio histórico de pack no contamina mínimo de botella
+- snapshot stale con winner pack no aparece en /radar

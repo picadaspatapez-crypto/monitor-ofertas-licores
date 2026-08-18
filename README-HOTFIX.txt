@@ -1,13 +1,11 @@
-v5.8.1 — Commercial Radar Visibility Hotfix
+v5.8.2 — Pack Identity Guard Hotfix
 
-Aplicar sobre v5.8.0.
+APLICAR SOBRE: v5.8.1 — Commercial Radar Visibility Hotfix
 
-Corrige la experiencia de /radar y /minimos cuando los filtros estrictos de v5.8.0 no encuentran señales excepcionales.
+Este ZIP corrige comparaciones entre multipacks y botellas individuales. Reconoce formatos como X6 750 ml y 750cc x6, añade defensas en comparador/históricos/radar y repara package_quantity antiguo al recalcular inteligencia comercial.
 
-IMPORTANTE:
-- Las alertas automáticas siguen siendo estrictas.
-- /radar usa fallback interactivo a oportunidades verificadas.
-- /minimos usa fallback a los productos más cercanos a su mínimo histórico.
-- No hay migraciones.
-- No se tocan collectors ni CAV.
-- No requiere Run now después del deploy.
+No agrega migraciones. Alembic permanece en 0012_commercial_intelligence.
+
+Después del deploy ejecutar UN SOLO Run now para sanear metadatos, matching, históricos y Opportunity Snapshots existentes.
+
+Ver DEPLOY_V5.8.2.md para instrucciones.

@@ -5,6 +5,7 @@
 Siguiente línea propuesta:
 
 - **v5.8.1**: sólo estabilización si producción revela casos borde en señales históricas.
+- **v5.8.2**: hotfix de identidad de multipacks (`X6`, `x6`) y saneamiento de históricos/radar; sin migración.
 - **v5.9.0**: expansión controlada con dos nuevas tiendas, priorizando APIs estructuradas.
 - **v6.0.0**: dashboard avanzado, watchlists por umbral y analítica de compra.
 

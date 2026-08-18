@@ -100,6 +100,17 @@ _PACK_COUNT_PATTERNS = (
     re.compile(r"\b(\d{1,2})\s+latas?\b", re.IGNORECASE),
 )
 
+# Muchas tiendas chilenas expresan multipacks como ``X6 750 ml`` o
+# ``750 cc x6`` sin escribir "pack". La expresión histórica sólo reconocía
+# ``6x750 ml`` y por eso esos productos podían entrar al Matching 2.0 como
+# botellas individuales. Estos patrones se evalúan de forma conservadora: el
+# multiplicador desnudo requiere además un volumen verificable en el título.
+_PACK_SUFFIX_MULTIPLIER_PATTERNS = (
+    re.compile(r"\b[x×]\s*(\d{1,2})\b", re.IGNORECASE),
+    re.compile(r"\b(\d{1,2})\s*[x×](?=\s|$)", re.IGNORECASE),
+)
+_COMMON_MULTIPACK_COUNTS = {2, 3, 4, 5, 6, 8, 10, 12, 15, 18, 20, 24, 30, 36, 48}
+
 _VOLUME_REMOVE_RE = re.compile(
     r"(?<!\d)\d+(?:[.,]\d+)?\s*(?:ml|cc|cl|l|lt|lts|litro|litros)\b",
     re.IGNORECASE,
@@ -257,6 +268,23 @@ def extract_pack_count(text: str) -> int | None:
         count = int(match.group(1))
         if 2 <= count <= 48:
             return count
+
+    # Formatos reales observados en producción:
+    #   "Casas Patronales ... X6 750 ml"
+    #   "Cocotel ... X6 1000 ml"
+    #   "Vodka ... 700cc x6"
+    # Un token Xn aislado sólo se considera multipack si el nombre también
+    # contiene un volumen de botella/lata, reduciendo falsos positivos con
+    # nombres de ediciones o modelos que pudieran contener una X.
+    if extract_volume_ml(normalized) is not None:
+        for pattern in _PACK_SUFFIX_MULTIPLIER_PATTERNS:
+            match = pattern.search(normalized)
+            if match is None:
+                continue
+            count = int(match.group(1))
+            if count in _COMMON_MULTIPACK_COUNTS:
+                return count
+
     if _PACK_WORD_RE.search(normalized) or _BUNDLE_MARKER_RE.search(normalized):
         return 2
     return None

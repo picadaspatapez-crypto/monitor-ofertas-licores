@@ -140,6 +140,7 @@ def _previous_historical_minima(
         .where(
             Product.master_product_id.in_(master_ids),
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -180,6 +181,18 @@ def analyze_cross_store_prices(
     }
     comparison_store_ids = set(comparison_stores)
     products = [product for product in products if product.store_id in comparison_store_ids]
+
+    # Defensa de identidad v5.8.2: ningún multipack puede participar en una
+    # comparación cross-store, incluso si quedó enlazado a un master antiguo
+    # por una versión previa o posee un ProductMatch de alta confianza.
+    # ``package_quantity`` cubre la clasificación persistida y la firma en vivo
+    # cubre títulos recién observados antes de cualquier reconciliación futura.
+    products = [
+        product
+        for product in products
+        if int(getattr(product, "package_quantity", 1) or 1) == 1
+        and not build_product_signature(product.name).is_pack
+    ]
     product_ids_for_quotes = [int(product.id) for product in products]
     public_quote_by_product: dict[int, ProductPriceQuote] = {}
     if product_ids_for_quotes:

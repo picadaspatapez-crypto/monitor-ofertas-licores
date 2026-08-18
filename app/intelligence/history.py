@@ -8,6 +8,7 @@ from statistics import median
 from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.matching import build_product_signature
 from app.models import MasterPriceStatistic, PriceObservation, Product, ProductPriceQuote, Store
 from app.repositories.common import utcnow
 
@@ -54,6 +55,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
         .join(Store, Store.id == Product.store_id)
         .where(
             Product.master_product_id.is_not(None),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -87,6 +89,7 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
             .join(Store, Store.id == Product.store_id)
             .where(
                 Product.master_product_id.in_(result),
+                Product.package_quantity == 1,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -114,6 +117,7 @@ def _low_price_frequency_90d(session: Session, *, cutoff) -> dict[int, float]:
         .where(
             Product.master_product_id.is_not(None),
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -138,6 +142,7 @@ def _low_price_frequency_90d(session: Session, *, cutoff) -> dict[int, float]:
         .join(base, base.c.master_id == Product.master_product_id)
         .where(
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -151,7 +156,26 @@ def _low_price_frequency_90d(session: Session, *, cutoff) -> dict[int, float]:
         for master_id, frequency in session.execute(statement)
     }
 
+def _refresh_package_quantities(session: Session) -> int:
+    """Reclasifica cantidades de pack usando el parser vigente.
+
+    Es una reparación ligera de metadatos para instalaciones que ya acumularon
+    nombres ``X6`` antes de v5.8.2. Se recorren también publicaciones no vistas
+    en el run actual para que un pack antiguo no siga contaminando históricos.
+    """
+    changed = 0
+    for product in session.scalars(select(Product).order_by(Product.id)):
+        quantity = int(build_product_signature(product.name).pack_count or 1)
+        if int(product.package_quantity or 1) != quantity:
+            product.package_quantity = quantity
+            changed += 1
+    if changed:
+        session.flush()
+    return changed
+
+
 def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
+    _refresh_package_quantities(session)
     now = utcnow()
     stats_30 = _aggregate_period(session, cutoff=now - timedelta(days=30), include_median=True)
     cutoff_90 = now - timedelta(days=90)
@@ -166,6 +190,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .join(Store, Store.id == Product.store_id)
             .where(
                 Product.master_product_id.is_not(None),
+                Product.package_quantity == 1,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -182,6 +207,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .join(Store, Store.id == Product.store_id)
             .where(
                 Product.master_product_id.is_not(None),
+                Product.package_quantity == 1,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),
@@ -199,6 +225,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
                 Product.master_product_id.is_not(None),
                 Product.is_available.is_(True),
                 Product.excluded_from_comparison.is_(False),
+                Product.package_quantity == 1,
                 Product.current_price > 0,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
@@ -216,6 +243,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
             .where(
                 Product.master_product_id.is_not(None),
                 Product.is_available.is_(True),
+                Product.package_quantity == 1,
                 Store.is_active.is_(True),
             Store.comparison_enabled.is_(True),
             _public_price_eligible_clause(),

@@ -67,6 +67,7 @@ def _statement(*, minimum_score: float, events: tuple[str, ...] | None, order: s
             OpportunitySnapshot.score >= minimum_score,
             Product.is_available.is_(True),
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
         )
         .order_by(*ordering, MasterProduct.canonical_name)

@@ -98,6 +98,7 @@ def refresh_personal_opportunities(
             Store.is_active.is_(True),
             Product.is_available.is_(True),
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Product.master_product_id.is_not(None),
             ProductPriceQuote.is_active.is_(True),
         )
@@ -245,6 +246,7 @@ def top_personal_opportunities(
         .where(
             Product.is_available.is_(True),
             Product.excluded_from_comparison.is_(False),
+            Product.package_quantity == 1,
             Store.is_active.is_(True),
             PersonalOpportunitySnapshot.score >= float(minimum_score),
         )

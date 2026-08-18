@@ -1,3 +1,12 @@
+## v5.8.2 — Pack Identity Guard Hotfix
+
+- Corrige detección de multipacks expresados como `X6 750 ml`, `750 cc x6`, `X12`, etc., aunque el nombre no contenga la palabra `pack`.
+- Mantiene la política existente: packs/cajas/multipacks no participan en Matching 2.0 ni en comparaciones cross-store por botella.
+- Añade una segunda barrera en el analizador de precios para excluir multipacks aunque exista un `ProductMatch` antiguo, EAN reutilizado o equivalencia previa.
+- Excluye multipacks de históricos comerciales, Opportunity Score público/personal, `/radar` y `/minimos`, evitando mínimos y ahorros artificiales.
+- La siguiente ejecución HEALTHY autocorrige enlaces previos porque cada producto vuelve primero a su master normalizado y luego Matching 2.0 sólo fusiona publicaciones elegibles.
+- Sin cambios en collectors, scheduler, CAV, alertas por tienda ni esquema de base de datos. Alembic permanece en `0012_commercial_intelligence`.
+
 ## v5.8.1 — Commercial Radar Visibility Hotfix
 
 - `/radar` conserva primero las señales estrictas y, si no existen, muestra las mejores oportunidades verificadas disponibles.
