@@ -1,6 +1,6 @@
 # Monitor de Ofertas de Licores
 
-**Versión actual: v5.7.0 — Canonical Catalog & Matching 2.0.**
+**Versión actual: v5.8.0 — Commercial Intelligence 2.0.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial,
 comparar productos equivalentes, medir oportunidades reales y consultar el
@@ -19,24 +19,31 @@ catálogo desde web o Telegram.
 - Socomep
 - La Vinoteca
 
-### Fuente personal
+### Fuente híbrida pública/personal
 
-- CAV: activa para el perfil privado mediante precios `MEMBER`, pero continúa
-  excluida del comparador público.
+- CAV: participa en el mercado público sólo mediante precios `PUBLIC`/`SALE` sin elegibilidad y mantiene `MEMBER/cav_member` para el perfil personal.
 
 La Barra, Tost y GradoÚnico permanecen fuera del registry activo.
 
-## Novedades de v5.7
+## Novedades de v5.8
 
-- **Catálogo canónico:** cada identidad maestra conserva fingerprint, volumen, marca, ABV, añada, formato y aliases observados por tienda.
-- **Matching 2.0:** EAN es la señal estructural principal; SKU solo refuerza un match cuando la identidad textual/estructural ya es fuerte.
-- **Conflictos duros:** no se comparan automáticamente productos con distinto volumen, añada, graduación incompatible, variante o presentación pack/regalo.
-- **Cola de revisión:** candidatos cercanos al umbral quedan pendientes en `/matching/review` en vez de forzar una equivalencia dudosa.
-- **Decisiones persistentes:** “Mismo producto” y “No comparar” generan reglas manuales que se reutilizan en los siguientes ciclos.
-- **Data Quality Engine:** cada publicación recibe score 0–100, estado `CLEAN`, `WARNING` o `BLOCKED` y lista de incidencias.
-- **Protección del comparador:** registros bloqueados permanecen auditables pero no pueden alterar búsqueda, históricos, favoritos ni Opportunity Score.
-- **Panel de calidad:** `/quality` muestra publicaciones sospechosas y la razón exacta de su exclusión.
-- **Migración:** `0011_canonical_matching_quality`.
+- **Opportunity Score v2:** pondera ahorro de mercado, posición histórica, rareza, confianza de matching, frescura y escasez.
+- **Nuevo mínimo histórico:** compara el precio del run actual con el mínimo previo al ciclo y registra la ruptura en pesos y porcentaje.
+- **Rareza de oferta:** mide con qué frecuencia el mercado estuvo dentro de 5% de su piso de 90 días y sólo la usa con historia suficiente.
+- **Señales explicables:** `NEW_HISTORICAL_MIN`, `RARE_OFFER`, `AT_HISTORICAL_MIN`, `NEAR_HISTORICAL_MIN`, `MARKET_LEADER` y `NORMAL`.
+- **Alertas comerciales deduplicadas:** nuevos mínimos y ofertas raras con baja real pueden notificarse automáticamente sin repetir el mismo precio en cada ciclo.
+- **Telegram:** añade `/radar`, `/inteligencia` y `/minimos`.
+- **Buscador web:** muestra badges de señal comercial, Score v2 y frecuencia de piso cuando existe historia suficiente.
+- **Migración:** `0012_commercial_intelligence`.
+- **Sin cambios de collectors:** scraping, scheduler, CAV híbrido y reglas de calidad/matching de v5.7.1 se conservan.
+
+## Base heredada de v5.7
+
+- Catálogo canónico con fingerprint, EAN/SKU, ABV, añada, formato y aliases.
+- Matching 2.0 con conflictos duros y cola `/matching/review`.
+- Data Quality Engine 0–100 con `CLEAN`, `WARNING` y `BLOCKED`.
+- `/quality` y `/calidad` disponibles en Telegram.
+- CAV híbrido: público sólo `PUBLIC`/`SALE`; `MEMBER` permanece personal.
 
 ## Novedades de v5.6
 
@@ -48,7 +55,7 @@ La Barra, Tost y GradoÚnico permanecen fuera del registry activo.
 - Opportunity Score personal usa ahorro, historia contextual, matching, frescura y escasez.
 - Telegram añade `/miprecio`, `/personal` y `/historialsocio`.
 - Alertas personales notifican bajas del precio MEMBER y ventajas relevantes frente al mejor precio público.
-- La comparación pública, favoritos públicos y Opportunity Score público siguen aislados de CAV.
+- Los precios `MEMBER` de CAV siguen aislados del comparador público; sus quotes `PUBLIC`/`SALE` sí pueden participar desde v5.7.1.
 
 ## Base heredada de v5.4
 
@@ -105,8 +112,8 @@ Postgres
    ▲
    ├── monitor-ofertas-licores
    │      cron cada 6 horas
-   │      8 tiendas públicas + CAV personal, máximo 4 workers
-   │      matching + historial + Opportunity Score
+   │      8 tiendas públicas base + CAV híbrido, máximo 4 workers
+   │      matching + historial + Opportunity Score v2
    │
    └── buscador-licores
           web /buscar + API + bot Telegram permanente
@@ -114,9 +121,9 @@ Postgres
 
 ## Despliegue
 
-Consulta [`DEPLOY_V5.7.md`](DEPLOY_V5.7.md).
+Consulta [`DEPLOY_V5.8.md`](DEPLOY_V5.8.md).
 
-La versión incorpora la migración Alembic `0011_canonical_matching_quality`. El
+La versión incorpora la migración Alembic `0012_commercial_intelligence`. El
 `entrypoint.sh` existente ejecuta `alembic upgrade head` antes del pipeline.
 
 ## Ejecución local

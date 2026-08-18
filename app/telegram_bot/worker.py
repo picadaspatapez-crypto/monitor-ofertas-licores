@@ -13,7 +13,7 @@ from app.favorites import (
     list_favorites,
     resolve_favorite_query,
 )
-from app.intelligence.queries import top_opportunities
+from app.intelligence.queries import commercial_radar, historical_floor_opportunities, top_opportunities
 from app.intelligence.personal import top_personal_opportunities
 from app.models import MasterProduct, Product, ScrapeRun, Store, TelegramFavorite
 from app.search.web import SearchApplication
@@ -263,6 +263,30 @@ class TelegramSearchBot:
                 text = "⚠️ No pude consultar el historial en este momento."
             self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
+        if command.name in {"commercial_radar", "historical_floors"}:
+            try:
+                with self.application.SessionLocal() as session:
+                    views = (
+                        commercial_radar(session, limit=15, minimum_score=70.0)
+                        if command.name == "commercial_radar"
+                        else historical_floor_opportunities(session, limit=15)
+                    )
+                text, markup = format_opportunities(
+                    views,
+                    title=(
+                        "Radar comercial · Opportunity Score v2"
+                        if command.name == "commercial_radar"
+                        else "Precios en o cerca del mínimo histórico"
+                    ),
+                )
+            except Exception as exc:
+                print(f"BOT commercial radar error ({type(exc).__name__}: {exc}).", flush=True)
+                text, markup = "⚠️ No pude consultar la inteligencia comercial.", None
+            self._send(
+                chat_id=chat_id, message_id=message_id, text=text, reply_markup=markup
+            )
+            return
+
         if command.name in {"opportunities", "best_prices"}:
             try:
                 with self.application.SessionLocal() as session:

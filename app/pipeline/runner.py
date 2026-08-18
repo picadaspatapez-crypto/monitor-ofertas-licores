@@ -27,9 +27,11 @@ from app.intelligence import (
 from app.models import ScrapeRun, Store
 from app.notifications import (
     ComparisonAlertContext,
+    CommercialAlertContext,
     NotificationBundle,
     SmartAlertContext,
     build_comparison_notification_bundles,
+    build_commercial_notification_bundles,
     build_smart_notification_bundles,
     build_personal_price_notification_bundles,
     build_personal_store_ranking_bundle,
@@ -855,10 +857,21 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             session.flush()
             historical = refresh_price_statistics(session)
             contextual = refresh_context_price_statistics(session)
+            updated_run_ids = sorted(
+                int(result.run_id)
+                for result in successful
+                if result.run_id is not None
+                and result.execution_state == "UPDATED"
+                and result.health_status == "HEALTHY"
+            )
             comparison = analyze_cross_store_prices(
                 session,
                 run_ids=run_ids,
+                current_observation_run_ids=updated_run_ids,
                 minimum_confidence=settings.cross_store_match_min_confidence,
+                commercial_min_history_observations=settings.commercial_min_history_observations,
+                commercial_rare_frequency_threshold=settings.commercial_rare_frequency_threshold,
+                commercial_near_historical_min_pct=settings.commercial_near_historical_min_pct,
             )
             opportunity_rows = persist_opportunity_snapshots(
                 session, comparison.opportunities
@@ -892,6 +905,9 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Oportunidades de precio...: {len(comparison.opportunities)}", flush=True)
         print(f"Opportunity Scores guardados: {opportunity_rows}", flush=True)
         print(f"Opportunity Scores personales: {personal_rows}", flush=True)
+        print(f"Nuevos mínimos históricos.: {sum(item.price_event == 'NEW_HISTORICAL_MIN' for item in comparison.opportunities)}", flush=True)
+        print(f"Ofertas poco frecuentes...: {sum(item.price_event == 'RARE_OFFER' for item in comparison.opportunities)}", flush=True)
+        print(f"Cerca/en mínimo histórico..: {sum(item.price_event in {'AT_HISTORICAL_MIN', 'NEAR_HISTORICAL_MIN'} for item in comparison.opportunities)}", flush=True)
         print(f"Cambios de ganador........: {len(comparison.winner_changes)}", flush=True)
         print(f"Empates...................: {comparison.ties}", flush=True)
         print(f"Grupos no verificados.....: {comparison.unverified_groups}", flush=True)
@@ -930,6 +946,31 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
             )
         else:
             print("Telegram comparador: ranking sin cambios; 0 mensajes.", flush=True)
+
+        commercial_bundles = build_commercial_notification_bundles(
+            comparison,
+            context=CommercialAlertContext(
+                enabled=settings.commercial_alerts_enabled,
+                minimum_score=float(settings.commercial_alert_min_score),
+                rare_frequency_threshold=settings.commercial_rare_frequency_threshold,
+                minimum_history_observations=settings.commercial_min_history_observations,
+                limit=settings.commercial_alert_limit,
+            ),
+        )
+        if commercial_bundles:
+            c_sent, c_skipped, c_failed = deliver_notification_bundles(
+                SessionLocal=SessionLocal,
+                bundles=commercial_bundles,
+                telegram_bot_token=settings.telegram_bot_token,
+                telegram_chat_id=settings.telegram_chat_id,
+                send_message_fn=send_message,
+            )
+            print(
+                f"Telegram inteligencia comercial: enviados={c_sent}, omitidos={c_skipped}, fallidos={c_failed}.",
+                flush=True,
+            )
+        else:
+            print("Telegram inteligencia comercial: sin señales nuevas notificables.", flush=True)
 
         if settings.personal_alerts_enabled:
             with SessionLocal() as session:
@@ -1222,10 +1263,18 @@ def run_pipeline() -> int:
         flush=True,
     )
     print(
+        "Inteligencia comercial v2: "
+        f"alertas={'sí' if settings.commercial_alerts_enabled else 'no'}; "
+        f"score raro ≥ {settings.commercial_alert_min_score}; "
+        f"frecuencia piso ≤ {settings.commercial_rare_frequency_threshold:.0%}; "
+        f"historia mínima={settings.commercial_min_history_observations} observaciones.",
+        flush=True,
+    )
+    print(
         "Resiliencia de tiendas: "
         f"El Mundo del Vino cada {performance.el_mundo_interval_hours} h "
         f"(tolerancia {performance.scheduler_grace_minutes} min); "
-        "La Barra deshabilitada; La Vinoteca activa; CAV activo para precios personales y aislado del comparador público.",
+        "La Barra deshabilitada; La Vinoteca activa; CAV híbrido: público + socio personal separados.",
         flush=True,
     )
 

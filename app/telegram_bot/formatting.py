@@ -209,8 +209,11 @@ def _result_lines(index: int, result: SearchResult) -> list[str]:
     if result.opportunity_score is not None:
         lines.append(
             f"🔥 Oportunidad: <b>{result.opportunity_score:.0f}/100</b> "
-            f"· {_escape(result.opportunity_classification or '')}"
+            f"· {_escape(result.opportunity_classification or '')} · {_escape(getattr(result, 'score_version', 'v2'))}"
         )
+    signal = _commercial_event_text(getattr(result, "price_event", "NORMAL"))
+    if signal and result.price_mode == "public":
+        lines.append(f"🧠 Señal: <b>{_escape(signal)}</b>")
     if result.avg_90d and result.avg_90d > 0:
         difference = (result.winner.price - result.avg_90d) / result.avg_90d
         lines.append(
@@ -290,6 +293,16 @@ def format_history_result(query: str, result: SearchResult | None) -> str:
     return "\n".join(lines)
 
 
+def _commercial_event_text(event: str) -> str | None:
+    return {
+        "NEW_HISTORICAL_MIN": "🚨 nuevo mínimo histórico",
+        "AT_HISTORICAL_MIN": "🏆 en mínimo histórico",
+        "NEAR_HISTORICAL_MIN": "📉 cerca del mínimo histórico",
+        "RARE_OFFER": "🔥 oferta poco frecuente",
+        "MARKET_LEADER": "🥇 líder de mercado",
+    }.get(str(event or "NORMAL"))
+
+
 def format_opportunities(
     views: list[OpportunityView], *, title: str = "Oportunidades"
 ) -> tuple[str, dict[str, Any] | None]:
@@ -309,6 +322,18 @@ def format_opportunities(
                 f"Confianza: {view.confidence * 100:.0f}%",
             ]
         )
+        signal = _commercial_event_text(getattr(view, "price_event", "NORMAL"))
+        if signal:
+            lines.append(f"Señal: <b>{_escape(signal)}</b>")
+        rarity_frequency = getattr(view, "rarity_frequency_90d", None)
+        history_obs = int(getattr(view, "history_observations_90d", 0) or 0)
+        if rarity_frequency is not None and history_obs:
+            lines.append(
+                f"Zona de piso: {float(rarity_frequency) * 100:.0f}% de {history_obs} observaciones"
+            )
+        reason = getattr(view, "intelligence_reason", None)
+        if reason and signal:
+            lines.append(f"Motivo: {_escape(reason)}")
         if view.avg_90d:
             difference = (view.winner_price - view.avg_90d) / view.avg_90d
             lines.append(f"Vs. promedio 90 d: {difference * 100:+.1f}%")

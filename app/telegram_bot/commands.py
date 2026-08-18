@@ -61,6 +61,10 @@ def parse_command(text: str | None) -> BotCommand:
         return BotCommand("opportunities")
     if command == "/mejores":
         return BotCommand("best_prices")
+    if command in {"/radar", "/inteligencia"}:
+        return BotCommand("commercial_radar")
+    if command in {"/minimos", "/mínimos"}:
+        return BotCommand("historical_floors")
     if command == "/personal":
         return BotCommand("personal_opportunities")
     if command == "/miprecio":

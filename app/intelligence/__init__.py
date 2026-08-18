@@ -3,6 +3,12 @@ from app.intelligence.quality import QualityRunSummary, summarize_quality_for_ru
 from app.intelligence.availability import AvailabilitySummary, reconcile_store_availability
 from app.intelligence.history import PriceStatisticsRefresh, refresh_price_statistics
 from app.intelligence.context_history import ContextStatisticsRefresh, refresh_context_price_statistics
+from app.intelligence.commercial import (
+    CommercialComponents,
+    CommercialSignal,
+    classify_commercial_signal,
+    commercial_opportunity_score,
+)
 from app.intelligence.opportunity import (
     OpportunityComponents,
     classify_opportunity,
@@ -13,6 +19,10 @@ from app.intelligence.opportunity import (
 __all__ = [
     "AvailabilitySummary",
     "OpportunityComponents",
+    "CommercialComponents",
+    "CommercialSignal",
+    "classify_commercial_signal",
+    "commercial_opportunity_score",
     "PriceStatisticsRefresh",
     "ContextStatisticsRefresh",
     "CanonicalRefreshSummary",

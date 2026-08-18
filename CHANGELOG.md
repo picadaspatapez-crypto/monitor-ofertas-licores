@@ -1,3 +1,17 @@
+# v5.8.0 — Commercial Intelligence 2.0
+
+- Introduce Opportunity Score v2 con pesos 30/25/15/15/10/5 para mercado, histórico, rareza, matching, frescura y escasez.
+- Añade `low_price_frequency_90d`, frecuencia con que el mercado estuvo dentro de 5% de su mínimo de 90 días.
+- Calcula el mínimo histórico previo excluyendo únicamente los runs `UPDATED + HEALTHY` del ciclo actual.
+- Clasifica oportunidades como `NEW_HISTORICAL_MIN`, `RARE_OFFER`, `AT_HISTORICAL_MIN`, `NEAR_HISTORICAL_MIN`, `MARKET_LEADER` o `NORMAL`.
+- Persiste score versionado, rareza, mínimo anterior, gap histórico y explicación de la señal en `opportunity_snapshots`.
+- Añade alertas Telegram deduplicadas para nuevos mínimos históricos y ofertas raras con baja real.
+- Añade `/radar`, `/inteligencia` y `/minimos` al bot.
+- El buscador web y reportes muestran badges comerciales, Score v2 y frecuencia de piso.
+- Añade configuración conservadora para umbral de rareza, historia mínima y límite de alertas.
+- Migración Alembic `0012_commercial_intelligence`.
+- No modifica collectors, scheduler, Matching 2.0, Data Quality ni política híbrida de CAV.
+
 ## v5.7.1 — Quality Command & CAV Public Market
 
 - `/quality` y `/calidad` ahora funcionan directamente en Telegram y resumen BLOCKED/WARNING.

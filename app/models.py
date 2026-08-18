@@ -445,6 +445,7 @@ class MasterPriceStatistic(Base):
     observations_90d: Mapped[int] = mapped_column(Integer, default=0)
     observations_total: Mapped[int] = mapped_column(Integer, default=0)
     discount_frequency_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    low_price_frequency_90d: Mapped[float] = mapped_column(Float, default=0.0)
     days_at_current_price: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -472,6 +473,15 @@ class OpportunitySnapshot(Base):
     history_position: Mapped[float] = mapped_column(Float, default=0.0)
     freshness_score: Mapped[float] = mapped_column(Float, default=0.0)
     scarcity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    score_version: Mapped[str] = mapped_column(String(20), default="v2")
+    rarity_score: Mapped[float] = mapped_column(Float, default=0.0)
+    rarity_frequency_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    history_observations_90d: Mapped[int] = mapped_column(Integer, default=0)
+    previous_historical_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    price_event: Mapped[str] = mapped_column(String(40), default="NORMAL", index=True)
+    historical_gap_clp: Mapped[int] = mapped_column(Integer, default=0)
+    historical_gap_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    intelligence_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     calculated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True
     )

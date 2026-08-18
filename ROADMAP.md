@@ -1,12 +1,12 @@
-# Estado v5.7
+# Estado v5.8
 
-**v5.7.0 — Canonical Catalog & Matching 2.0** implementa el catálogo canónico, la cola de revisión manual y el Data Quality Engine.
+**v5.8.0 — Commercial Intelligence 2.0** implementa Opportunity Score v2, detección de nuevos mínimos históricos, rareza de la zona de precio y alertas comerciales explicables.
 
 Siguiente línea propuesta:
 
-- **v5.7.1**: solo estabilización si producción revela casos borde.
-- **v5.8.0**: Commercial Intelligence 2.0, mínimos históricos y rareza de ofertas.
-- **v5.9.0**: expansión controlada con nuevas tiendas.
+- **v5.8.1**: sólo estabilización si producción revela casos borde en señales históricas.
+- **v5.9.0**: expansión controlada con dos nuevas tiendas, priorizando APIs estructuradas.
+- **v6.0.0**: dashboard avanzado, watchlists por umbral y analítica de compra.
 
 ---
 
@@ -14,28 +14,56 @@ Siguiente línea propuesta:
 
 ## Versiones completadas
 
-- **v5.2**: Donde La Negra y Distribuidora La Modelo.
-- **v5.3**: estabilización de las tiendas nuevas.
-- **v5.3.3**: La Barra sale de la operación activa y Socomep la reemplaza.
-- **v5.3.4**: El Mundo del Vino migra a Storefront GraphQL con control estricto de rate limit.
-- **v5.4.0**: inteligencia de catálogo, disponibilidad real, historial 30/90 días,
-  Opportunity Score, matching SKU/EAN, paginación Telegram y reporte semanal.
+- **v5.3.3**: Socomep reemplaza La Barra.
+- **v5.3.4**: El Mundo del Vino migra a Shopify Storefront GraphQL.
+- **v5.4.0**: disponibilidad real, historial 30/90 días, Opportunity Score v1 y scheduler con tolerancia.
+- **v5.5.x**: La Vinoteca, infraestructura multiprecio, CAV sharded y renovación del buscador web.
+- **v5.6.x**: activación de precios personales CAV y rankings automáticos por Telegram.
+- **v5.7.0**: catálogo canónico, Matching 2.0 y Data Quality Engine.
+- **v5.7.1**: `/quality` en Telegram y CAV híbrido público/personal.
+- **v5.8.0**: Commercial Intelligence 2.0, mínimos históricos y rareza de ofertas.
 
-## Próximas líneas
-
-- **v5.4.1**: estabilización de métricas, reglas manuales y consultas de historial
-  con datos reales de Railway.
-- **v5.5**: nuevas tiendas solo después de confirmar calidad del matching y tiempo
-  total del pipeline.
-- **v5.6**: presupuesto de compra, margen de reventa y ranking de cartera.
-
-## Estado operativo en v5.4
+## Estado operativo
 
 - Licor3B: activo.
 - Líquidos: activo.
-- El Mundo del Vino: activo cada 12 horas, Storefront GraphQL y scheduler con gracia.
+- El Mundo del Vino: activo con intervalo de 12 horas y Storefront GraphQL.
 - Comercial JP: activo.
-- Donde La Negra: activo, conserva SKU cuando la API lo entrega.
-- Distribuidora La Modelo: activo, paginación dinámica y código público como SKU.
-- Socomep: activo cada 6 horas.
-- La Barra, Tost y GradoÚnico: deshabilitados y excluidos de ofertas vigentes.
+- Donde La Negra: activo.
+- Distribuidora La Modelo: activo.
+- Socomep: activo.
+- La Vinoteca: activa mediante VTEX.
+- CAV: fuente híbrida; `PUBLIC`/`SALE` puede participar en mercado público y `MEMBER` permanece en perfil personal.
+- La Barra, Tost y GradoÚnico: deshabilitados.
+
+## v5.8 — Commercial Intelligence 2.0
+
+Objetivos completados:
+
+1. Opportunity Score v2 con componente explícito de rareza.
+2. Frecuencia de piso de 90 días.
+3. Comparación contra mínimo histórico previo al run actual.
+4. Señales `NEW_HISTORICAL_MIN`, `RARE_OFFER`, `AT_HISTORICAL_MIN`, `NEAR_HISTORICAL_MIN` y `MARKET_LEADER`.
+5. Alertas automáticas deduplicadas de mínimos y ofertas raras.
+6. `/radar` y `/minimos` en Telegram.
+7. Señales y Score v2 en buscador web y reportes.
+8. Persistencia de la explicación comercial para auditoría.
+
+## v5.9 — Expansión controlada
+
+Propuesta:
+
+- investigar dos tiendas nuevas;
+- priorizar Shopify Storefront, VTEX, WooCommerce o APIs públicas antes de Playwright;
+- exigir calidad y matching antes de activar una tienda en el comparador;
+- mantener máximo cuatro collectors paralelos y 25 minutos por collector.
+
+## v6.0 — Dashboard y watchlists
+
+Propuesta:
+
+- watchlists por precio objetivo;
+- alertas por Opportunity Score mínimo;
+- alertas por ventaja CAV frente al mercado;
+- dashboard avanzado de históricos, salud y cartera de oportunidades;
+- evaluación posterior de rentabilidad/reventa sólo con costos verificables.

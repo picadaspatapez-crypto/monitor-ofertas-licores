@@ -1,15 +1,30 @@
+HOTFIX v5.8.0 — Commercial Intelligence 2.0
+
+BASE REQUERIDA
 v5.7.1 — Quality Command & CAV Public Market
 
-BASE REQUIRED: v5.7.0
+APLICACIÓN
+1. Crear respaldo de PostgreSQL.
+2. Copiar el contenido de este hotfix sobre la raíz del repositorio v5.7.1.
+3. Reemplazar los archivos existentes conservando las rutas.
+4. Commit + push.
+5. Confirmar que Railway ejecuta `alembic upgrade head` y queda en `0012_commercial_intelligence`.
+6. Ejecutar un único Run now después de un deployment exitoso.
 
-Apply the contents of this ZIP over the repository root, preserving paths and replacing existing files.
+QUÉ CAMBIA
+- Opportunity Score v2.
+- Frecuencia de piso de 90 días.
+- Nuevo mínimo histórico comparado contra el historial previo al run actual.
+- Señales comerciales explicables.
+- Alertas deduplicadas para nuevos mínimos y ofertas raras con baja real.
+- Telegram /radar, /inteligencia y /minimos.
+- Badges comerciales en el buscador web.
 
-WHAT IT FIXES
-1) /quality now works directly in Telegram. /calidad is an alias.
-2) CAV becomes a hybrid source:
-   - PUBLIC comparator: only PUBLIC/SALE prices that do not require eligibility.
-   - PERSONAL comparator: MEMBER/cav_member remains available.
-3) A CAV member-only price can never leak into the public comparator.
-4) No database migration is required.
+QUÉ NO CAMBIA
+- Collectors.
+- Scheduler.
+- Máximo de workers y límite por collector.
+- Matching 2.0 / Data Quality.
+- Política híbrida pública/personal de CAV.
 
-After deployment, run once manually so the store metadata is synchronized and CAV is marked comparison_enabled=true in PostgreSQL.
+Consulta DEPLOY_V5.8.md antes de desplegar.

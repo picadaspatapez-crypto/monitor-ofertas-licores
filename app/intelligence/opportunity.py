@@ -73,6 +73,15 @@ def persist_opportunity_snapshots(session: Session, comparisons) -> int:
         row.history_position = item.history_position
         row.freshness_score = item.freshness_score
         row.scarcity_score = item.scarcity_score
+        row.score_version = getattr(item, "score_version", "v2")
+        row.rarity_score = float(getattr(item, "rarity_score", 0.0) or 0.0)
+        row.rarity_frequency_90d = getattr(item, "rarity_frequency_90d", None)
+        row.history_observations_90d = int(getattr(item, "history_observations_90d", 0) or 0)
+        row.previous_historical_min = getattr(item, "previous_historical_min", None)
+        row.price_event = str(getattr(item, "price_event", "NORMAL") or "NORMAL")
+        row.historical_gap_clp = int(getattr(item, "historical_gap_clp", 0) or 0)
+        row.historical_gap_pct = float(getattr(item, "historical_gap_pct", 0.0) or 0.0)
+        row.intelligence_reason = getattr(item, "intelligence_reason", None)
         row.calculated_at = now
         updated += 1
     if active_ids:

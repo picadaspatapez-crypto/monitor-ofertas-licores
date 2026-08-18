@@ -1,0 +1,25 @@
+v5.8.0 — Commercial Intelligence 2.0
+Base validada: v5.7.1 — Quality Command & CAV Public Market
+
+Validación de desarrollo
+- pytest completo: 192 passed
+- tests focalizados v5.8: 8 passed
+- Python compileall: OK
+- Alembic head: 0012_commercial_intelligence
+
+Validación del hotfix
+- Hotfix aplicado sobre copia limpia de v5.7.1: OK
+- pytest después de aplicar el hotfix: 192 passed
+- Python compileall después del overlay: OK
+- Alembic head después del overlay: 0012_commercial_intelligence
+
+Cobertura focalizada v5.8
+- Opportunity Score v2 y pesos máximos.
+- Prioridad de NEW_HISTORICAL_MIN sobre rareza.
+- Historia mínima exigida para RARE_OFFER.
+- Frecuencia de piso 90d (zona <= 5% sobre el mínimo).
+- Exclusión del run actual al calcular el mínimo histórico anterior.
+- Alertas de nuevo mínimo histórico.
+- RARE_OFFER no alerta sólo por desplegar v5.8 si el precio no bajó en el run.
+- RARE_OFFER sí alerta después de una baja real.
+- Comandos /radar, /inteligencia y /minimos.

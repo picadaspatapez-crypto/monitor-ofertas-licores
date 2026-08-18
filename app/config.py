@@ -87,6 +87,12 @@ class Settings:
     personal_alert_min_drop_amount: int
     personal_alert_min_advantage_clp: int
     personal_alert_limit: int
+    commercial_alerts_enabled: bool
+    commercial_alert_min_score: int
+    commercial_min_history_observations: int
+    commercial_rare_frequency_threshold: float
+    commercial_near_historical_min_pct: float
+    commercial_alert_limit: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -149,5 +155,23 @@ class Settings:
             ),
             personal_alert_limit=_positive_int(
                 "PERSONAL_ALERT_LIMIT", 10
+            ),
+            commercial_alerts_enabled=_bool_env(
+                "COMMERCIAL_ALERTS_ENABLED", True
+            ),
+            commercial_alert_min_score=_positive_int(
+                "COMMERCIAL_ALERT_MIN_SCORE", 85
+            ),
+            commercial_min_history_observations=_positive_int(
+                "COMMERCIAL_MIN_HISTORY_OBSERVATIONS", 6
+            ),
+            commercial_rare_frequency_threshold=_percentage(
+                "COMMERCIAL_RARE_FREQUENCY_PERCENT", 15.0
+            ),
+            commercial_near_historical_min_pct=_percentage(
+                "COMMERCIAL_NEAR_HISTORICAL_MIN_PERCENT", 3.0
+            ),
+            commercial_alert_limit=_positive_int(
+                "COMMERCIAL_ALERT_LIMIT", 8
             ),
         )

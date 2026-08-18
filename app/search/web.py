@@ -119,6 +119,18 @@ def _opportunity_class(score: float | None) -> str:
     return ""
 
 
+def _commercial_event_badge(event: str) -> tuple[str, str] | None:
+    value = str(event or "NORMAL")
+    labels = {
+        "NEW_HISTORICAL_MIN": ("Nuevo mínimo", "signal-new-min"),
+        "AT_HISTORICAL_MIN": ("Mínimo histórico", "signal-min"),
+        "NEAR_HISTORICAL_MIN": ("Cerca del mínimo", "signal-near"),
+        "RARE_OFFER": ("Oferta rara", "signal-rare"),
+        "MARKET_LEADER": ("Líder de mercado", "signal-market"),
+    }
+    return labels.get(value)
+
+
 def _price_context_label(offer) -> str:
     if offer.price_type == "MEMBER":
         return "Precio socio"
@@ -143,8 +155,12 @@ def _result_html(result: SearchResult) -> str:
         classification = html.escape(result.opportunity_classification or "Oportunidad")
         badges.append(
             f'<span class="badge badge-opportunity{_opportunity_class(result.opportunity_score)}">'
-            f'{result.opportunity_score:.0f}/100 · {classification}</span>'
+            f'{result.opportunity_score:.0f}/100 · {classification} · {html.escape(result.score_version)}</span>'
         )
+    signal_badge = _commercial_event_badge(result.price_event)
+    if signal_badge is not None and result.price_mode == "public":
+        label, css_class = signal_badge
+        badges.append(f'<span class="badge badge-signal {css_class}">{html.escape(label)}</span>')
 
     stats: list[str] = []
     if result.runner_up and result.saving_clp > 0:
@@ -172,6 +188,12 @@ def _result_html(result: SearchResult) -> str:
             '<div class="insight"><span>Mínimo histórico</span>'
             f'<strong>{format_clp(result.historical_min)}</strong>'
             '<small>desde el monitoreo</small></div>'
+        )
+    if result.price_mode == "public" and result.rarity_frequency_90d is not None and result.history_observations_90d:
+        stats.append(
+            '<div class="insight intelligence-insight"><span>Frecuencia cerca del piso</span>'
+            f'<strong>{result.rarity_frequency_90d * 100:.0f}%</strong>'
+            f'<small>{result.history_observations_90d} observaciones · rareza {result.rarity_score * 100:.0f}/100</small></div>'
         )
 
     offers: list[str] = []

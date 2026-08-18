@@ -1,3 +1,7 @@
+from app.notifications.commercial import (
+    CommercialAlertContext,
+    build_commercial_notification_bundles,
+)
 from app.notifications.comparison import (
     ComparisonAlertContext,
     build_comparison_notification_bundles,
@@ -12,6 +16,8 @@ from app.notifications.policy import (
 
 __all__ = [
     "NotificationBundle",
+    "CommercialAlertContext",
+    "build_commercial_notification_bundles",
     "ComparisonAlertContext",
     "build_comparison_notification_bundles",
     "comparison_fingerprint",

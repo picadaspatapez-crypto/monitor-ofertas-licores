@@ -23,7 +23,7 @@ def _comparison_lines(position: int, comparison: PriceComparison) -> list[str]:
     lines.extend(
         [
             f"Ahorro: {clp(comparison.saving_clp)} ({comparison.saving_pct:.1%}) frente al segundo",
-            f"🔥 Opportunity Score: {comparison.opportunity_score:.0f}/100 · {comparison.opportunity_classification}",
+            f"🔥 Opportunity Score v2: {comparison.opportunity_score:.0f}/100 · {comparison.opportunity_classification}",
             f"Confianza del match: {_confidence_text(comparison.confidence)}",
             f"Comprar más barato: {winner.url}",
         ]
@@ -37,6 +37,22 @@ def _comparison_lines(position: int, comparison: PriceComparison) -> list[str]:
         )
     if comparison.history_min_90d:
         lines.insert(-1, f"Mínimo 90 días: {clp(comparison.history_min_90d)}")
+    event_labels = {
+        "NEW_HISTORICAL_MIN": "🚨 Nuevo mínimo histórico",
+        "AT_HISTORICAL_MIN": "🏆 En mínimo histórico",
+        "NEAR_HISTORICAL_MIN": "📉 Cerca del mínimo histórico",
+        "RARE_OFFER": "🔥 Oferta poco frecuente",
+        "MARKET_LEADER": "🥇 Líder de mercado",
+    }
+    event_label = event_labels.get(comparison.price_event)
+    if event_label:
+        lines.insert(-1, f"Señal comercial: {event_label}")
+    if comparison.rarity_frequency_90d is not None and comparison.history_observations_90d:
+        lines.insert(
+            -1,
+            f"Frecuencia cerca del piso: {comparison.rarity_frequency_90d:.0%} "
+            f"({comparison.history_observations_90d} observaciones)",
+        )
     if len(comparison.offers) > 2:
         most_expensive = comparison.offers[-1]
         total_saving = most_expensive.price - winner.price

@@ -62,6 +62,12 @@ class SearchResult:
     public_reference_price: int | None = None
     personal_advantage_clp: int = 0
     personal_advantage_pct: float = 0.0
+    score_version: str = "v2"
+    price_event: str = "NORMAL"
+    rarity_score: float = 0.0
+    rarity_frequency_90d: float | None = None
+    history_observations_90d: int = 0
+    intelligence_reason: str | None = None
 
 
 def _token_score(query_tokens: tuple[str, ...], candidate_tokens: set[str]) -> float:
@@ -409,6 +415,12 @@ def search_products(
         public_reference_price = None
         personal_advantage_clp = 0
         personal_advantage_pct = 0.0
+        score_version = "v2"
+        price_event = "NORMAL"
+        rarity_score = 0.0
+        rarity_frequency_90d = None
+        history_observations_90d = 0
+        intelligence_reason = None
 
         if price_mode == "personal":
             contextual = context_stats.get((winner.product_id, winner.price_type, winner.audience_key))
@@ -445,6 +457,12 @@ def search_products(
             if snap is not None:
                 opportunity_score_value = float(snap.score)
                 opportunity_classification = snap.classification
+                score_version = str(getattr(snap, "score_version", "v2") or "v2")
+                price_event = str(getattr(snap, "price_event", "NORMAL") or "NORMAL")
+                rarity_score = float(getattr(snap, "rarity_score", 0.0) or 0.0)
+                rarity_frequency_90d = getattr(snap, "rarity_frequency_90d", None)
+                history_observations_90d = int(getattr(snap, "history_observations_90d", 0) or 0)
+                intelligence_reason = getattr(snap, "intelligence_reason", None)
 
         results.append(
             SearchResult(
@@ -472,6 +490,12 @@ def search_products(
                 public_reference_price=public_reference_price,
                 personal_advantage_clp=personal_advantage_clp,
                 personal_advantage_pct=personal_advantage_pct,
+                score_version=score_version,
+                price_event=price_event,
+                rarity_score=rarity_score,
+                rarity_frequency_90d=rarity_frequency_90d,
+                history_observations_90d=history_observations_90d,
+                intelligence_reason=intelligence_reason,
             )
         )
     return results

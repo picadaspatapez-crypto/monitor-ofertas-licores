@@ -101,10 +101,62 @@ def _aggregate_period(session: Session, *, cutoff, include_median: bool) -> dict
     return result
 
 
+
+def _low_price_frequency_90d(session: Session, *, cutoff) -> dict[int, float]:
+    """Frecuencia con que el mercado estuvo dentro de 5 % de su piso de 90 días."""
+    base = (
+        select(
+            Product.master_product_id.label("master_id"),
+            func.min(PriceObservation.price).label("minimum"),
+        )
+        .join(PriceObservation, PriceObservation.product_id == Product.id)
+        .join(Store, Store.id == Product.store_id)
+        .where(
+            Product.master_product_id.is_not(None),
+            Product.excluded_from_comparison.is_(False),
+            Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
+            PriceObservation.observed_at >= cutoff,
+            PriceObservation.price > 0,
+        )
+        .group_by(Product.master_product_id)
+        .subquery()
+    )
+    statement = (
+        select(
+            Product.master_product_id,
+            func.avg(
+                case(
+                    (PriceObservation.price <= base.c.minimum * 1.05, 1.0),
+                    else_=0.0,
+                )
+            ).label("frequency"),
+        )
+        .join(PriceObservation, PriceObservation.product_id == Product.id)
+        .join(Store, Store.id == Product.store_id)
+        .join(base, base.c.master_id == Product.master_product_id)
+        .where(
+            Product.excluded_from_comparison.is_(False),
+            Store.is_active.is_(True),
+            Store.comparison_enabled.is_(True),
+            _public_price_eligible_clause(),
+            PriceObservation.observed_at >= cutoff,
+            PriceObservation.price > 0,
+        )
+        .group_by(Product.master_product_id)
+    )
+    return {
+        int(master_id): float(frequency or 0.0)
+        for master_id, frequency in session.execute(statement)
+    }
+
 def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
     now = utcnow()
     stats_30 = _aggregate_period(session, cutoff=now - timedelta(days=30), include_median=True)
-    stats_90 = _aggregate_period(session, cutoff=now - timedelta(days=90), include_median=True)
+    cutoff_90 = now - timedelta(days=90)
+    stats_90 = _aggregate_period(session, cutoff=cutoff_90, include_median=True)
+    low_frequency_90 = _low_price_frequency_90d(session, cutoff=cutoff_90)
 
     historical = {
         int(master_id): (int(value) if value is not None else None)
@@ -198,6 +250,7 @@ def refresh_price_statistics(session: Session) -> PriceStatisticsRefresh:
         row.observations_90d = int(period_90.get("observations", 0))
         row.observations_total = max(row.observations_90d, totals.get(master_id, 0))
         row.discount_frequency_90d = float(period_90.get("discount_frequency", 0.0))
+        row.low_price_frequency_90d = float(low_frequency_90.get(master_id, 0.0))
         row.days_at_current_price = (
             max(0, int((now - since).total_seconds() // 86400)) if since is not None else 0
         )
