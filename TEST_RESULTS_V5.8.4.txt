@@ -1,0 +1,18 @@
+v5.8.4 — Licor3B Title Integrity Guard
+
+Validation base: v5.8.3 canonical pack repair
+
+Full pytest suite:
+207 passed
+
+Focused title/pack integrity tests:
+16 passed
+
+Python compileall:
+OK
+
+Alembic head:
+0012_commercial_intelligence (unchanged)
+
+Database migrations:
+None

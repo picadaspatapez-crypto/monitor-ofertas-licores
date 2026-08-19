@@ -7,6 +7,7 @@ from sqlalchemy import Float, cast, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.matching import build_product_signature
+from app.collectors.licor3b import _safe_product_name
 from app.models import (
     MasterPriceStatistic,
     MasterProduct,
@@ -91,6 +92,11 @@ def _views(session: Session, statement, *, limit: int) -> list[OpportunityView]:
         if build_product_signature(master.canonical_name or "").is_pack:
             continue
         if build_product_signature(product.name or "").is_pack:
+            continue
+        # Live title-integrity guard for stale v5.8.3 snapshots. If a Licor3B
+        # winner still carries adjacent-card text, do not surface it until the next
+        # repair/recalculation cycle has rebuilt the canonical identity.
+        if store.name == "Licor3B" and _safe_product_name(product.name or "", product.url or "") != (product.name or ""):
             continue
         views.append(
             OpportunityView(

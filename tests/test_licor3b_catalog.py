@@ -45,3 +45,20 @@ def test_excludes_adios_gabriel_promotional_category():
     """
     sections = _discover_sections_from_html(html)
     assert {section.key for section in sections} == {"cervezas"}
+
+
+def test_licor3b_uses_product_slug_when_card_title_is_contaminated():
+    from app.collectors.licor3b import _safe_product_name
+
+    url = "https://licor3b.cl/product/vino-marques-de-casa-concha-cabernet-sauvignon-750-ml/"
+    bad = "3 Vinos Montes Alpha Cabernet Sauvignon 3 Vinos Marques De Casa Concha Cabernet Sauvignon 750 ml"
+    fixed = _safe_product_name(bad, url)
+    assert fixed == "vino marques de casa concha cabernet sauvignon 750 ml"
+
+
+def test_licor3b_keeps_legitimate_pack_title_when_slug_agrees():
+    from app.collectors.licor3b import _safe_product_name
+
+    url = "https://licor3b.cl/product/pack-6-vinos-reserva-cabernet-sauvignon-750-ml/"
+    title = "Pack 6 Vinos Reserva Cabernet Sauvignon 750 ml"
+    assert _safe_product_name(title, url) == title

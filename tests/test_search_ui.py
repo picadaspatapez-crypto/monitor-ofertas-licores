@@ -53,7 +53,7 @@ def test_home_ui_shows_catalog_pulse_and_quick_searches():
         max_age_hours=72,
         pulse=CatalogPulse(public_stores=8, comparable_products=2450, fresh_offers=8200),
     ).decode("utf-8")
-    assert "Canonical Pack Repair &amp; Economic Sanity Guard" in page
+    assert "Licor3B Title Integrity Guard" in page
     assert "8</strong><span>tiendas públicas" in page
     assert "2.450</strong><span>productos comparables" in page
     assert "8.200</strong><span>precios vigentes" in page

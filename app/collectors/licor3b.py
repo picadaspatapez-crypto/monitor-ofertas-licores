@@ -5,7 +5,7 @@ import sys
 import time
 from dataclasses import dataclass, replace
 from typing import Optional
-from urllib.parse import urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import unquote, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 from playwright.sync_api import (
@@ -151,6 +151,70 @@ def _clean_name(text: str) -> str:
     return " ".join(cleaned.split()).strip(" -|")
 
 
+def _name_from_product_url(url: str) -> str:
+    """Build a conservative product title from Licor3B's stable product slug.
+
+    The store's category DOM can occasionally concatenate text from adjacent
+    recommendation/product widgets into one card title. The product URL itself is
+    much more stable (e.g. ``/product/vino-marques-de-casa-concha-...-750-ml/``).
+    This helper is only used as a guard/fallback; it does not change the URL.
+    """
+    path = unquote(urlparse(url).path or "").strip("/")
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2 or parts[-2].casefold() not in {"product", "producto", "tienda"}:
+        return ""
+    slug = parts[-1].strip().replace("_", "-")
+    if not slug:
+        return ""
+    words = [word for word in slug.split("-") if word]
+    if len(words) < 3:
+        return ""
+    text = " ".join(words)
+    # Preserve common units in lower case for the existing normalizer.
+    text = re.sub(r"\b(ml|cc|cl|lt|lts)\b", lambda m: m.group(1).lower(), text, flags=re.IGNORECASE)
+    return " ".join(text.split()).strip()
+
+
+def _title_tokens(text: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold())
+    return [token for token in normalized.split() if token]
+
+
+def _looks_like_contaminated_title(title: str, url_name: str) -> bool:
+    """Detect category-card titles polluted with text from neighbouring products.
+
+    We intentionally require strong evidence before trusting the slug over visible
+    text. A title is considered polluted when the URL-derived identity is almost
+    fully contained in it but the visible title carries a large foreign prefix or
+    suffix. This catches cases such as:
+
+    ``3 Vinos Montes Alpha ... 3 Vinos Marques De Casa Concha ... 750 ml``
+
+    while leaving legitimate multipack titles alone when their slug also describes
+    the pack.
+    """
+    title_tokens = _title_tokens(title)
+    slug_tokens = _title_tokens(url_name)
+    if len(slug_tokens) < 3 or len(title_tokens) <= len(slug_tokens):
+        return False
+    slug_set = set(slug_tokens)
+    title_set = set(title_tokens)
+    overlap = len(slug_set & title_set) / max(1, len(slug_set))
+    extras = len(title_tokens) - len(slug_tokens)
+    repeated_product_word = sum(token in {"vino", "vinos", "whisky", "pisco", "ron", "gin", "vodka", "tequila"} for token in title_tokens) >= 2
+    repeated_volume = len(re.findall(r"(?<!\d)\d+(?:[.,]\d+)?\s*(?:ml|cc|cl|l|lt|lts)\b", title, flags=re.IGNORECASE)) >= 2
+    leading_bundle_noise = bool(re.match(r"^\s*\d+\s+(?:vinos?|botellas?|un(?:idades?)?)\b", title, flags=re.IGNORECASE))
+    return overlap >= 0.72 and extras >= 3 and (repeated_product_word or repeated_volume or leading_bundle_noise)
+
+
+def _safe_product_name(raw_title: str, url: str) -> str:
+    visible = _clean_name(raw_title)
+    url_name = _clean_name(_name_from_product_url(url))
+    if url_name and _looks_like_contaminated_title(visible, url_name):
+        return url_name
+    return visible or url_name
+
+
 def _candidate_cards(soup: BeautifulSoup) -> list[Tag]:
     selectors = (
         "li.product", ".products .product", ".product-small", ".product-item",
@@ -181,7 +245,8 @@ def _parse_card(card: Tag, section_name: str) -> Optional[CollectedProduct]:
     if not _valid_product_url(url):
         return None
     title_node = card.select_one(".woocommerce-loop-product__title, .product-title, .name, h2, h3, h4")
-    name = _clean_name(title_node.get_text(" ", strip=True) if title_node else link.get_text(" ", strip=True))
+    raw_title = title_node.get_text(" ", strip=True) if title_node else link.get_text(" ", strip=True)
+    name = _safe_product_name(raw_title, url)
     prices = _all_prices(card.get_text(" ", strip=True))
     if not name or len(name) < 4 or not prices:
         return None

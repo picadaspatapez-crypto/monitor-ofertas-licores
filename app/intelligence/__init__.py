@@ -1,5 +1,6 @@
 from app.intelligence.canonical import CanonicalRefreshSummary, refresh_canonical_for_runs
 from app.intelligence.pack_guard import PackIdentityRepairSummary, repair_pack_identity
+from app.intelligence.title_guard import TitleIntegrityRepairSummary, repair_licor3b_title_integrity
 from app.intelligence.quality import QualityRunSummary, summarize_quality_for_runs
 from app.intelligence.availability import AvailabilitySummary, reconcile_store_availability
 from app.intelligence.history import PriceStatisticsRefresh, refresh_price_statistics
@@ -31,6 +32,8 @@ __all__ = [
     "QualityRunSummary",
     "refresh_canonical_for_runs",
     "repair_pack_identity",
+    "TitleIntegrityRepairSummary",
+    "repair_licor3b_title_integrity",
     "summarize_quality_for_runs",
     "classify_opportunity",
     "opportunity_score",
