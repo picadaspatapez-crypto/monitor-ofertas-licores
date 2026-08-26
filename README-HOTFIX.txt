@@ -1,22 +1,13 @@
-HOTFIX v5.8.4 — Licor3B Title Integrity Guard
+HOTFIX v5.8.5 — Canonical Snapshot Consistency Guard
 
-BASE REQUERIDA
-v5.8.3 — Canonical Pack Repair & Economic Sanity Guard
+Base: v5.8.4
 
-APLICACIÓN
-1. Respaldar PostgreSQL.
-2. Copiar el contenido del ZIP hotfix sobre la raíz del repositorio v5.8.3.
-3. Reemplazar los archivos conservando las rutas.
-4. Commit + push.
-5. Confirmar deployment exitoso. No hay migraciones nuevas; Alembic sigue en 0012_commercial_intelligence.
-6. Ejecutar un único Run now para reparar nombres Licor3B persistidos y recalcular snapshots.
+Objetivo:
+- eliminar snapshots master/winner inconsistentes;
+- retirar masters huérfanos;
+- impedir que /radar y /minimos muestren masters merged o winners relinked;
+- sanear en lectura títulos Licor3B legados aunque el Product ya esté corregido.
 
-QUÉ CORRIGE
-- Títulos de tarjetas Licor3B contaminados con texto de productos vecinos.
-- Usa el slug estable de la URL solo cuando existe evidencia fuerte de contaminación.
-- Repara filas históricas de Licor3B sin borrar PriceObservations.
-- Reconstruye nombres canónicos afectados.
-- Purga snapshots derivados para recalcular radar/minimos.
-- Añade un guard vivo en /radar y /minimos mientras sobreviva un snapshot viejo.
-
-Consulta DEPLOY_V5.8.4.md antes de desplegar.
+No hay migraciones nuevas.
+Después del deploy ejecutar un solo Run now.
+Ver DEPLOY_V5.8.5.md.

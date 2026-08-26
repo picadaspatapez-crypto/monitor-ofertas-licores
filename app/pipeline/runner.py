@@ -899,7 +899,13 @@ def _run_cross_store_stage(*, SessionLocal, settings: Settings, results: list[Co
         print(f"Productos reagrupados.....: {matching.products_relinked}", flush=True)
         print(f"Maestros fusionados.......: {matching.masters_merged}", flush=True)
         print(f"Calidad CLEAN/WARN/BLOCK..: {quality.clean}/{quality.warnings}/{quality.blocked}", flush=True)
-        print(f"Títulos Licor3B reparados.: {title_repair.products_repaired}; masters={title_repair.masters_repaired}; snapshots={title_repair.snapshots_purged}", flush=True)
+        print(
+            f"Títulos Licor3B reparados.: {title_repair.products_repaired}; "
+            f"masters={title_repair.masters_repaired}; snapshots={title_repair.snapshots_purged}; "
+            f"orphans={title_repair.orphan_masters_retired}; "
+            f"inconsistentes={title_repair.inconsistent_snapshots_purged}",
+            flush=True,
+        )
         print(f"Pack identities reparadas.: {pack_repair.mixed_masters_found} masters; {pack_repair.products_relinked} productos", flush=True)
         print(f"Snapshots pack purgados....: {pack_repair.snapshots_purged}", flush=True)
         print(f"Revisión matching nueva...: {matching.review_candidates}", flush=True)

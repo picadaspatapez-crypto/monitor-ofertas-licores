@@ -302,7 +302,10 @@ def analyze_cross_store_prices(
         # Fail closed if the canonical identity itself still looks like a pack.
         # v5.8.3 repairs these groups earlier in the pipeline, but this independent
         # guard prevents a stale/partially repaired master from reaching Radar.
-        if master is not None and (
+        if master is None or str(master.status or "").casefold() != "active":
+            unverified_groups += 1
+            continue
+        if (
             int(getattr(master, "package_quantity", 1) or 1) > 1
             or build_product_signature(master.canonical_name or "").is_pack
         ):

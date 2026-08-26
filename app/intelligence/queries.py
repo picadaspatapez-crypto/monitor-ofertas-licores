@@ -7,7 +7,7 @@ from sqlalchemy import Float, cast, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.matching import build_product_signature
-from app.collectors.licor3b import _safe_product_name
+from app.intelligence.title_guard import safe_licor3b_display_name
 from app.models import (
     MasterPriceStatistic,
     MasterProduct,
@@ -72,6 +72,8 @@ def _statement(*, minimum_score: float, events: tuple[str, ...] | None, order: s
             Product.package_quantity == 1,
             MasterProduct.package_quantity == 1,
             Store.is_active.is_(True),
+            MasterProduct.status == "active",
+            Product.master_product_id == OpportunitySnapshot.master_product_id,
         )
         .order_by(*ordering, MasterProduct.canonical_name)
     )
@@ -93,15 +95,26 @@ def _views(session: Session, statement, *, limit: int) -> list[OpportunityView]:
             continue
         if build_product_signature(product.name or "").is_pack:
             continue
-        # Live title-integrity guard for stale v5.8.3 snapshots. If a Licor3B
-        # winner still carries adjacent-card text, do not surface it until the next
-        # repair/recalculation cycle has rebuilt the canonical identity.
-        if store.name == "Licor3B" and _safe_product_name(product.name or "", product.url or "") != (product.name or ""):
-            continue
+        display_name = master.canonical_name
+        licor3b_identity = product if store.name == "Licor3B" else session.scalar(
+            select(Product)
+            .where(
+                Product.master_product_id == master.id,
+                func.lower(Product.store) == "licor3b",
+            )
+            .order_by(Product.data_quality_score.desc(), Product.id)
+            .limit(1)
+        )
+        if licor3b_identity is not None:
+            display_name = safe_licor3b_display_name(
+                canonical_name=master.canonical_name or "",
+                product_name=licor3b_identity.name or "",
+                url=licor3b_identity.url or "",
+            )
         views.append(
             OpportunityView(
                 master_product_id=int(master.id),
-                canonical_name=master.canonical_name,
+                canonical_name=display_name,
                 score=float(snapshot.score),
                 classification=snapshot.classification,
                 winner_store=store.name,

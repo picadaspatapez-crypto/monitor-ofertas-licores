@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.models import OpportunitySnapshot
+from app.models import MasterProduct, OpportunitySnapshot, Product
 from app.repositories.common import utcnow
 
 
@@ -53,6 +53,18 @@ def persist_opportunity_snapshots(session: Session, comparisons) -> int:
         if item.winner is None:
             continue
         master_id = int(item.master_product_id)
+        winner_product = session.get(Product, int(item.winner.product_id))
+        master = session.get(MasterProduct, master_id)
+        # Never persist a derived row whose winner was already relinked to a
+        # different canonical identity, or whose master is no longer active.
+        if (
+            winner_product is None
+            or winner_product.master_product_id is None
+            or int(winner_product.master_product_id) != master_id
+            or master is None
+            or str(master.status or "").casefold() != "active"
+        ):
+            continue
         active_ids.add(master_id)
         row = session.get(OpportunitySnapshot, master_id)
         if row is None:

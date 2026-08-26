@@ -1,0 +1,17 @@
+v5.8.5 — Canonical Snapshot Consistency Guard
+
+Base validada: v5.8.4
+
+pytest -q
+213 passed
+
+Focused regression:
+tests/test_v585_snapshot_consistency.py -> 6 passed
+
+python -m compileall -q app tests
+OK
+
+alembic heads
+0012_commercial_intelligence (head)
+
+Migraciones nuevas: ninguna
