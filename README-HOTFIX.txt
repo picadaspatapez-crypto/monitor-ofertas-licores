@@ -1,13 +1,11 @@
-HOTFIX v5.8.5 — Canonical Snapshot Consistency Guard
+v5.8.7 — PostgreSQL JSON DISTINCT Cross-store Hotfix
 
-Base: v5.8.4
+Aplicar sobre v5.8.6.
 
-Objetivo:
-- eliminar snapshots master/winner inconsistentes;
-- retirar masters huérfanos;
-- impedir que /radar y /minimos muestren masters merged o winners relinked;
-- sanear en lectura títulos Licor3B legados aunque el Product ya esté corregido.
+Archivos modificados:
+- app/repositories/matching.py
+- app/version.py
+- tests/test_v5_8_7_postgres_json_distinct.py
+- DEPLOY_V5.8.7.md
 
-No hay migraciones nuevas.
-Después del deploy ejecutar un solo Run now.
-Ver DEPLOY_V5.8.5.md.
+Corrige el error PostgreSQL "could not identify an equality operator for type json" de la etapa cross-store. No hay migraciones nuevas.

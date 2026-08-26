@@ -30,15 +30,26 @@ class ReconciliationSummary:
 def products_observed_in_runs(session: Session, run_ids: list[int]) -> list[Product]:
     if not run_ids:
         return []
+
+    # Do not use SELECT DISTINCT over the whole products row. Product contains
+    # JSON columns (for example data_quality_issues), and PostgreSQL cannot
+    # apply DISTINCT because the json type has no equality operator.
+    #
+    # EXISTS expresses the actual intent more precisely: return each product
+    # once when at least one observation belongs to one of the requested runs.
+    observed = (
+        select(PriceObservation.id)
+        .where(PriceObservation.product_id == Product.id)
+        .where(PriceObservation.scrape_run_id.in_(run_ids))
+        .exists()
+    )
     statement = (
         select(Product)
-        .join(PriceObservation, PriceObservation.product_id == Product.id)
-        .where(PriceObservation.scrape_run_id.in_(run_ids))
+        .where(observed)
         .where(Product.excluded_from_comparison.is_(False))
-        .distinct()
         .order_by(Product.id)
     )
-    return list(session.scalars(statement).unique())
+    return list(session.scalars(statement))
 
 
 class _UnionFind:

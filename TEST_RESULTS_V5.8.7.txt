@@ -1,0 +1,17 @@
+v5.8.7 — PostgreSQL JSON DISTINCT Cross-store Hotfix
+
+Validation
+==========
+pytest -q: 215 passed
+Focused regression: PostgreSQL-compiled products_observed_in_runs query contains EXISTS and no SELECT DISTINCT over Product JSON columns.
+Python compileall: OK
+Alembic head: 0012_commercial_intelligence
+New migrations: none
+
+Root cause
+==========
+The cross-store stage selected Product with JOIN + DISTINCT. Product contains JSON column data_quality_issues. PostgreSQL cannot compare json values for DISTINCT and raised psycopg.errors.UndefinedFunction.
+
+Fix
+===
+Use a correlated EXISTS subquery to select products observed in the requested scrape runs. This returns each Product once without requiring equality on JSON columns.

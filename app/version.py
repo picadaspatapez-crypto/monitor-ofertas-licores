@@ -1,3 +1,3 @@
-__version__ = "5.8.6"
+__version__ = "5.8.7"
 APP_VERSION = __version__
-RELEASE_NAME = "Canonical Snapshot Consistency + Search Dependency Isolation"
+RELEASE_NAME = "PostgreSQL JSON DISTINCT Cross-store Hotfix"
