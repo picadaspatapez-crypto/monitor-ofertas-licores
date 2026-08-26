@@ -195,3 +195,13 @@ def test_radar_sanitizes_polluted_master_even_when_winner_is_another_store():
         assert len(rows) == 1
         assert "Montes Alpha" not in rows[0].canonical_name
         assert "marques de casa concha" in rows[0].canonical_name.casefold()
+
+
+def test_title_guard_does_not_import_collectors_package():
+    import sys
+    import importlib
+    sys.modules.pop("app.intelligence.title_guard", None)
+    sys.modules.pop("app.intelligence.licor3b_title_utils", None)
+    sys.modules.pop("app.collectors.comercialjp", None)
+    importlib.import_module("app.intelligence.title_guard")
+    assert "app.collectors.comercialjp" not in sys.modules

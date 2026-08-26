@@ -1,0 +1,7 @@
+V5.8.6 - TEST RESULTS
+
+pytest: 214 passed
+compileall: OK
+search import without bs4/playwright: OK
+collector import isolation regression test: PASS
+No new Alembic migration.

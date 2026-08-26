@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session
 
-from app.collectors.licor3b import (
-    _looks_like_contaminated_title,
-    _name_from_product_url,
-    _safe_product_name,
+from app.intelligence.licor3b_title_utils import (
+    looks_like_contaminated_title as _looks_like_contaminated_title,
+    name_from_product_url as _name_from_product_url,
+    safe_product_name as _safe_product_name,
 )
 from app.matching import normalize_product_name
 from app.models import MasterProduct, OpportunitySnapshot, PersonalOpportunitySnapshot, Product
