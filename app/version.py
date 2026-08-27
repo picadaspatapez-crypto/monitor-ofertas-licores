@@ -1,3 +1,3 @@
-__version__ = "5.8.7"
+__version__ = "5.9.0"
 APP_VERSION = __version__
-RELEASE_NAME = "PostgreSQL JSON DISTINCT Cross-store Hotfix"
+RELEASE_NAME = "Store Expansion Wave 1"

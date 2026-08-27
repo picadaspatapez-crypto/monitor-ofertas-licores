@@ -1,0 +1,9 @@
+v5.9.0 Store Expansion Wave 1
+Base: v5.8.7
+
+pytest: 219 passed
+python compileall app: OK
+Alembic head: 0012_commercial_intelligence
+Migraciones nuevas: ninguna
+Collectors nuevos: lakoka, elbrindis, ranchowines
+Modo: HTTP-first; requires_browser=False en los tres
