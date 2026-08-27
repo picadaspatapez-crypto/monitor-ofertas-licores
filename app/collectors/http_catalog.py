@@ -102,9 +102,9 @@ def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogS
         try:
           for page in range(1,max_pages+1):
             ensure_budget(f'{store_name} {sec.name} página {page}')
-            url=page_url(base_url,sec,page); t=time.monotonic(); r=s.get(url,timeout=bounded_request_timeout((5,18))); metrics.download += int((time.monotonic()-t)*1000)
+            url=page_url(base_url,sec,page); t=time.monotonic(); r=s.get(url,timeout=bounded_request_timeout((5,18))); metrics.add('download', int((time.monotonic()-t)*1000))
             if r.status_code>=400: raise RuntimeError(f'HTTP {r.status_code} en {url}')
-            t=time.monotonic(); pp,pc=parse_cards(r.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.parse += int((time.monotonic()-t)*1000)
+            t=time.monotonic(); pp,pc=parse_cards(r.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.add('parse', int((time.monotonic()-t)*1000))
             sig=tuple(sorted(pp)); pages+=1;sp+=1;cards+=pc;sc+=pc
             if page>1 and (not sig or sig==prev): break
             prev=sig; new=0

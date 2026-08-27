@@ -1,0 +1,5 @@
+Validation v5.9.0.1
+- pytest: 220 passed
+- python compileall app: OK
+- Regression guard confirms no metrics.download / metrics.parse attribute access remains.
+- Alembic migration: none.
