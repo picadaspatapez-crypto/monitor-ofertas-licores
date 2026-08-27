@@ -1,0 +1,7 @@
+v5.9.0.2 validation
+===================
+Full pytest suite: 223 passed
+Focused El Brindis/HTTP catalog tests: 8 passed
+Python compileall: OK
+Alembic migrations: none
+Base required: v5.9.0.1

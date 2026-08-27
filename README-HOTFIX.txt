@@ -1,11 +1,19 @@
-v5.8.7 — PostgreSQL JSON DISTINCT Cross-store Hotfix
+v5.9.0.2 — El Brindis WooCommerce Card Parser Hotfix
 
-Aplicar sobre v5.8.6.
+Base requerida: v5.9.0.1
 
-Archivos modificados:
-- app/repositories/matching.py
-- app/version.py
-- tests/test_v5_8_7_postgres_json_distinct.py
-- DEPLOY_V5.8.7.md
+Objetivo:
+- Corregir El Brindis, que en v5.9.0.1 detectaba solo 1 tarjeta/producto por página.
+- Interpretar correctamente el layout WooCommerce/Flatsome desde enlaces de producto, sin depender de h2/h3.
+- Tratar HTTP 404 en páginas posteriores a una página válida como fin normal de paginación.
+- Fallar de forma segura si el HTML expone muchos enlaces de productos pero el parser solo logra recuperar una fracción pequeña.
 
-Corrige el error PostgreSQL "could not identify an equality operator for type json" de la etapa cross-store. No hay migraciones nuevas.
+Aplicación:
+1. Copiar el contenido de esta carpeta sobre la raíz del repositorio v5.9.0.1.
+2. Reemplazar los archivos existentes.
+3. Commit + push.
+4. Esperar deployment verde en Railway.
+5. Ejecutar un único Run now.
+
+No hay migraciones nuevas.
+La Koka y Rancho Wines no cambian.

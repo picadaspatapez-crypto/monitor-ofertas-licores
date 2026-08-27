@@ -4,6 +4,7 @@ import re
 import time
 import unicodedata
 from dataclasses import dataclass, replace
+from typing import Callable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import requests
@@ -51,6 +52,99 @@ def canonical(base_url:str,raw:str)->str:
     p=urlparse(urljoin(base_url,raw)); path=re.sub(r'/+','/',p.path).rstrip('/') or '/'
     return urlunparse(('https',p.netloc.casefold().removeprefix('www.'),path,'','',''))
 
+def _has_product_path(href:str, markers:tuple[str,...])->bool:
+    value=str(href or '')
+    return any(m in value for m in markers)
+
+def _distinct_product_urls(node:Tag, *, base_url:str, markers:tuple[str,...])->set[str]:
+    urls=set()
+    for a in node.select('a[href]'):
+        href=str(a.get('href') or '')
+        if _has_product_path(href, markers):
+            urls.add(canonical(base_url, href))
+    return urls
+
+def _nearest_single_product_card(anchor:Tag, *, base_url:str, markers:tuple[str,...])->Tag:
+    """Return the tightest ancestor that contains price text and a single product URL.
+
+    Flatsome/WooCommerce commonly wraps title and image anchors in nested ``product-small``
+    containers.  Looking for a heading first can accidentally climb to the whole grid.  This
+    anchor-first approach stays attached to one product identity.
+    """
+    fallback=anchor
+    for parent in anchor.parents:
+        if not isinstance(parent,Tag) or parent.name in {'body','html','[document]'}:
+            break
+        urls=_distinct_product_urls(parent,base_url=base_url,markers=markers)
+        if len(urls)>1:
+            break
+        fallback=parent
+        if len(urls)==1 and prices(text(parent.get_text(' ',strip=True))):
+            return parent
+    return fallback
+
+def _semantic_prices(card:Tag)->tuple[int|None,int|None]:
+    """Prefer WooCommerce sale markup (del/ins), then fall back to all card prices."""
+    ins=[]; dels=[]
+    for node in card.select('ins'):
+        ins.extend(prices(text(node.get_text(' ',strip=True))))
+    for node in card.select('del'):
+        dels.extend(prices(text(node.get_text(' ',strip=True))))
+    if ins:
+        current=min(ins)
+        regular=max([v for v in dels if v>current],default=None)
+        return current,regular
+    vals=prices(text(card.get_text(' ',strip=True)))
+    if not vals:return None,None
+    current=min(vals); higher=[v for v in vals if v>current]
+    return current,(max(higher) if higher else None)
+
+def parse_woocommerce_cards(html:str,*,store_name:str,base_url:str,section_name:str,product_path_markers:tuple[str,...]=('/producto/',)) -> tuple[dict[str,CollectedProduct],int]:
+    """Parse WooCommerce/Flatsome catalog cards without depending on one theme selector.
+
+    The parser starts from product URLs instead of headings.  El Brindis uses a Flatsome-like
+    layout where the title may be a ``p.name.product-title`` rather than h2/h3; the old generic
+    heading parser therefore saw only one large container per page.
+    """
+    soup=BeautifulSoup(html,'html.parser')
+    raw_urls=set(); anchors_by_url:dict[str,list[Tag]]={}
+    for a in soup.select('a[href]'):
+        if not isinstance(a,Tag):continue
+        href=str(a.get('href') or '')
+        if not _has_product_path(href,product_path_markers):continue
+        url=canonical(base_url,href); raw_urls.add(url); anchors_by_url.setdefault(url,[]).append(a)
+
+    out:dict[str,CollectedProduct]={}; candidates=0
+    bad_titles={'anadir al carrito','añadir al carrito','ver producto','leer mas','read more'}
+    for url,anchors in anchors_by_url.items():
+        # Prefer the anchor carrying the product name; image/add-to-cart anchors are common too.
+        title_anchor=None; name=''
+        for a in anchors:
+            candidate=text(a.get_text(' ',strip=True))
+            f=fold(candidate)
+            if len(candidate)>=4 and f not in bad_titles and not f.startswith('-%') and 'carrito' not in f:
+                title_anchor=a; name=candidate; break
+        if title_anchor is None:
+            # Resolve the title from a known WooCommerce/Flatsome title node inside a card.
+            title_anchor=anchors[0]
+        card=_nearest_single_product_card(title_anchor,base_url=base_url,markers=product_path_markers)
+        if not name:
+            title_node=card.select_one('.woocommerce-loop-product__title,.product-title,.name.product-title,h2,h3,h4')
+            if isinstance(title_node,Tag):name=text(title_node.get_text(' ',strip=True))
+        if len(name)<4:continue
+        current,regular=_semantic_prices(card)
+        if current is None:continue
+        candidates+=1
+        f=fold(text(card.get_text(' ',strip=True)))
+        if any(x in f for x in ('agotado','sin stock','out of stock')):continue
+        out[url]=CollectedProduct(store=store_name,name=name[:500],url=url,current_price=current,regular_price=regular,discount_pct=discount(regular,current),source_sections=(section_name,))
+
+    # Structural sanity check: if the HTML exposes many distinct product URLs but almost none
+    # could be parsed, fail closed rather than persisting a one-card-per-page false catalog.
+    if len(raw_urls)>=4 and len(out)<max(2,int(len(raw_urls)*0.5)):
+        raise RuntimeError(f'parser WooCommerce no confiable: urls_producto={len(raw_urls)}, productos_parseados={len(out)}')
+    return out,candidates
+
 def parse_cards(html:str,*,store_name:str,base_url:str,section_name:str,product_path_markers:tuple[str,...]=('/product','/producto','/products/')) -> tuple[dict[str,CollectedProduct],int]:
     soup=BeautifulSoup(html,'html.parser'); out={}; candidates=0; seen=set()
     for heading in soup.select('h2,h3,h4,a.woocommerce-LoopProduct-link .woocommerce-loop-product__title'):
@@ -61,7 +155,6 @@ def parse_cards(html:str,*,store_name:str,base_url:str,section_name:str,product_
         if not isinstance(link,Tag):
             link=heading.find('a',href=True) if heading.name!='a' else heading
         if not isinstance(link,Tag):
-            # Search a bounded parent card.
             card=heading
             for parent in heading.parents:
                 if not isinstance(parent,Tag) or parent.name in {'body','html','[document]'}: break
@@ -94,7 +187,7 @@ def merge(a:CollectedProduct|None,b:CollectedProduct)->CollectedProduct:
     sections=tuple(sorted(set(a.source_sections+b.source_sections),key=str.casefold)); chosen=b if b.current_price<=a.current_price else a
     return replace(chosen,source_sections=sections)
 
-def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogSection,...],page_url,max_pages:int=80,min_products:int=20,product_path_markers:tuple[str,...]=('/product','/producto','/products/')) -> CollectionBatch:
+def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogSection,...],page_url,max_pages:int=80,min_products:int=20,product_path_markers:tuple[str,...]=('/product','/producto','/products/'),card_parser:Callable[...,tuple[dict[str,CollectedProduct],int]]=parse_cards,terminal_404_after_success:bool=False) -> CollectionBatch:
     started=time.monotonic(); s=session(); allp={}; section_stats=[]; pages=cards=dups=0; aggregate=PhaseMetrics()
     try:
       for sec in sections:
@@ -103,8 +196,11 @@ def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogS
           for page in range(1,max_pages+1):
             ensure_budget(f'{store_name} {sec.name} página {page}')
             url=page_url(base_url,sec,page); t=time.monotonic(); r=s.get(url,timeout=bounded_request_timeout((5,18))); metrics.add('download', int((time.monotonic()-t)*1000))
+            if r.status_code==404 and terminal_404_after_success and page>1 and urls:
+                print(f'{store_name} {sec.key}: fin confirmado por HTTP 404 tras {page-1} páginas válidas.',flush=True)
+                break
             if r.status_code>=400: raise RuntimeError(f'HTTP {r.status_code} en {url}')
-            t=time.monotonic(); pp,pc=parse_cards(r.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.add('parse', int((time.monotonic()-t)*1000))
+            t=time.monotonic(); pp,pc=card_parser(r.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.add('parse', int((time.monotonic()-t)*1000))
             sig=tuple(sorted(pp)); pages+=1;sp+=1;cards+=pc;sc+=pc
             if page>1 and (not sig or sig==prev): break
             prev=sig; new=0
