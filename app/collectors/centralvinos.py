@@ -6,8 +6,8 @@ from app.collectors.http_catalog import HtmlCatalogSection, collect_html_store, 
 from app.domain import CollectedProduct
 BASE_URL='https://www.centralvinosylicores.cl'
 SECTIONS=tuple(HtmlCatalogSection(k,n,f'/{p}') for k,n,p in (
- ('whisky','Whisky','whisky'),('pisco','Pisco','pisco'),('ron','Ron','ron'),('tequila','Tequila','tequila'),('vodka','Vodka','vodka'),('licores','Licores','licores'),('vinos','Vinos','vinos'),('espumante','Espumante','espumante')))
-EXCLUDED={'','whisky','pisco','ron','tequila','vodka','licores','vinos','espumante','premium','cerveza','ofertas','bebidas','accesorios','contacto','contact','cart','carro','search','buscar','account','login'}
+ ('whisky','Whisky','whisky'),('pisco','Pisco','pisco'),('ron','Ron','ron'),('tequila','Tequila','tequila'),('vodka','Vodka','vodka'),('licores','Licores','licores'),('vinos','Vinos','vinos'),('espumantes','Espumantes','espumantes')))
+EXCLUDED={'','whisky','pisco','ron','tequila','vodka','licores','vinos','espumante','espumantes','premium','cerveza','ofertas','bebidas','accesorios','contacto','contact','cart','carro','search','buscar','account','login'}
 def _page(base,sec,page): return f'{base}{sec.path}' if page<=1 else f'{base}{sec.path}?{urlencode({"page":page})}'
 def _is_product(href):
     p=urlparse(canonical(BASE_URL,href)); parts=[x for x in p.path.split('/') if x]

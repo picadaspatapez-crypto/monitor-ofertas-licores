@@ -1,0 +1,12 @@
+v5.9.1.1 — Wave 2 Stabilization
+
+Full pytest suite: 221 passed
+Python compileall app/: OK
+New DB migrations: none
+
+Regression coverage:
+- Central uses /espumantes, not /espumante.
+- Licores.cl product identity preserves ?id=N.
+- Licores.cl page 2 keeps categoria_id + page + per-page.
+- Two detail IDs remain two distinct products.
+- A lower struck-through price is not incorrectly treated as the current price.

@@ -1,13 +1,20 @@
-# v5.9.0.1 — HTTP Catalog PhaseMetrics hotfix
+# v5.9.1.1 — Wave 2 Stabilization
 
-Corrige el fallo de El Brindis y Rancho Wines:
-`AttributeError: 'PhaseMetrics' object has no attribute 'download'`.
+Hotfix sobre **v5.9.1**. No modifica base de datos ni requiere migraciones.
 
-Causa: el helper HTTP nuevo de v5.9.0 trataba `PhaseMetrics` como si tuviera atributos `.download` y `.parse`. La API real usa `metrics.add(nombre, ms)`.
+## Corrige
 
-Cambios:
-- `metrics.download += ...` -> `metrics.add('download', ...)`
-- `metrics.parse += ...` -> `metrics.add('parse', ...)`
-- Sin cambios de DB, matching, scheduler o collectors existentes.
+1. **Licores.cl**: las fichas usan una única ruta `/producto/detalle` y diferencian el producto mediante `?id=N`. El canonicalizador común elimina query strings, por lo que v5.9.1 colapsaba todas las fichas a una sola identidad. Este hotfix preserva exclusivamente el `id` de producto para esta tienda, mantiene la paginación pública `page/per-page`, valida cobertura y conserva la semántica de precio vigente vs. precio tachado.
+2. **Central Vinos y Licores**: cambia la categoría inválida `/espumante` por la ruta pública vigente `/espumantes`.
+3. **Tienda de Vinos La Reina**: sin cambios.
 
-Despliegue: copiar el contenido del ZIP sobre v5.9.0, commit/push, esperar deploy verde y hacer un Run now.
+## Archivos de aplicación
+
+- `app/collectors/licorescl.py`
+- `app/collectors/centralvinos.py`
+- `app/version.py`
+
+## Despliegue
+
+Copiar/reemplazar estos archivos sobre v5.9.1, commit/push a GitHub y desplegar en Railway. No ejecutar Alembic adicional.
+Después del deployment verde, ejecutar un único `Run now` y revisar específicamente `Licores.cl` y `Central Vinos y Licores`.
