@@ -1,3 +1,3 @@
-__version__ = "5.9.1.1"
+__version__ = "5.9.1.2"
 APP_VERSION = __version__
-RELEASE_NAME = "Wave 2 Stabilization"
+RELEASE_NAME = "Vinos La Reina 202 Resilience"

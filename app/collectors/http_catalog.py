@@ -25,6 +25,13 @@ class HtmlCatalogSection:
     path: str
 
 
+@dataclass(frozen=True)
+class HtmlFetchResult:
+    status_code: int
+    text: str
+    source: str = 'http'
+
+
 def session() -> requests.Session:
     s=requests.Session()
     retry=Retry(total=2,connect=1,read=1,backoff_factor=.5,status_forcelist=(429,500,502,503,504),allowed_methods=frozenset({'GET'}),respect_retry_after_header=True,raise_on_status=False)
@@ -187,20 +194,26 @@ def merge(a:CollectedProduct|None,b:CollectedProduct)->CollectedProduct:
     sections=tuple(sorted(set(a.source_sections+b.source_sections),key=str.casefold)); chosen=b if b.current_price<=a.current_price else a
     return replace(chosen,source_sections=sections)
 
-def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogSection,...],page_url,max_pages:int=80,min_products:int=20,product_path_markers:tuple[str,...]=('/product','/producto','/products/'),card_parser:Callable[...,tuple[dict[str,CollectedProduct],int]]=parse_cards,terminal_404_after_success:bool=False) -> CollectionBatch:
-    started=time.monotonic(); s=session(); allp={}; section_stats=[]; pages=cards=dups=0; aggregate=PhaseMetrics()
+def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogSection,...],page_url,max_pages:int=80,min_products:int=20,product_path_markers:tuple[str,...]=('/product','/producto','/products/'),card_parser:Callable[...,tuple[dict[str,CollectedProduct],int]]=parse_cards,terminal_404_after_success:bool=False,page_fetcher:Callable[[requests.Session,str,str,int],HtmlFetchResult]|None=None) -> CollectionBatch:
+    started=time.monotonic(); s=session(); allp={}; section_stats=[]; pages=cards=dups=0; aggregate=PhaseMetrics(); fetch_sources:set[str]=set()
     try:
       for sec in sections:
         ensure_budget(f'{store_name} categoría {sec.name}'); ss=time.monotonic(); urls=set(); prev=None; sp=sc=sd=0; status='success'; err=None; warning=False; metrics=PhaseMetrics()
         try:
           for page in range(1,max_pages+1):
             ensure_budget(f'{store_name} {sec.name} página {page}')
-            url=page_url(base_url,sec,page); t=time.monotonic(); r=s.get(url,timeout=bounded_request_timeout((5,18))); metrics.add('download', int((time.monotonic()-t)*1000))
-            if r.status_code==404 and terminal_404_after_success and page>1 and urls:
+            url=page_url(base_url,sec,page); t=time.monotonic()
+            if page_fetcher is None:
+                r=s.get(url,timeout=bounded_request_timeout((5,18)))
+                fetched=HtmlFetchResult(status_code=r.status_code,text=r.text,source='http')
+            else:
+                fetched=page_fetcher(s,url,sec.name,page)
+            metrics.add('download', int((time.monotonic()-t)*1000)); fetch_sources.add(fetched.source)
+            if fetched.status_code==404 and terminal_404_after_success and page>1 and urls:
                 print(f'{store_name} {sec.key}: fin confirmado por HTTP 404 tras {page-1} páginas válidas.',flush=True)
                 break
-            if r.status_code>=400: raise RuntimeError(f'HTTP {r.status_code} en {url}')
-            t=time.monotonic(); pp,pc=card_parser(r.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.add('parse', int((time.monotonic()-t)*1000))
+            if fetched.status_code!=200: raise RuntimeError(f'HTTP {fetched.status_code} en {url}')
+            t=time.monotonic(); pp,pc=card_parser(fetched.text,store_name=store_name,base_url=base_url,section_name=sec.name,product_path_markers=product_path_markers); metrics.add('parse', int((time.monotonic()-t)*1000))
             sig=tuple(sorted(pp)); pages+=1;sp+=1;cards+=pc;sc+=pc
             if page>1 and (not sig or sig==prev): break
             prev=sig; new=0
@@ -209,7 +222,7 @@ def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogS
               else: urls.add(u);new+=1
               if u in allp:dups+=1
               allp[u]=merge(allp.get(u),p)
-            print(f'{store_name} {sec.key} página {page}: HTTP={r.status_code}, tarjetas={pc}, productos={len(pp)}, nuevos={new}, sección={len(urls)}, global={len(allp)}',flush=True)
+            print(f'{store_name} {sec.key} página {page}: HTTP={fetched.status_code}, fuente={fetched.source}, tarjetas={pc}, productos={len(pp)}, nuevos={new}, sección={len(urls)}, global={len(allp)}',flush=True)
             if page==1 and pc==0: warning=True
             if not pp or new==0: break
         except Exception as exc:
@@ -218,6 +231,6 @@ def collect_html_store(*,store_name:str,base_url:str,sections:tuple[HtmlCatalogS
     finally:s.close()
     failed=sum(x.status!='success' for x in section_stats); warnings=sum(x.structural_warning for x in section_stats)
     score=max(0,min(100,100-failed*15-warnings*8)); health='HEALTHY' if len(allp)>=min_products and not failed and not warnings else ('DEGRADED' if len(allp)>=min_products and score>=55 else 'BROKEN')
-    stats=CollectionStats(pages_visited=pages,cards_seen=cards,unique_products=len(allp),sections_discovered=len(sections),sections_visited=len(section_stats),sections_succeeded=sum(x.status=='success' for x in section_stats),sections_failed=failed,duplicates_removed=dups,discovery_source='fixed_public_categories_http',health_status=health,health_score=score,structural_warnings=warnings,section_stats=tuple(section_stats),performance_ms={**aggregate.as_dict(),'total':int((time.monotonic()-started)*1000)})
+    stats=CollectionStats(pages_visited=pages,cards_seen=cards,unique_products=len(allp),sections_discovered=len(sections),sections_visited=len(section_stats),sections_succeeded=sum(x.status=='success' for x in section_stats),sections_failed=failed,duplicates_removed=dups,discovery_source=('fixed_public_categories_http' if fetch_sources <= {'http'} else 'http_with_render_fallback'),health_status=health,health_score=score,structural_warnings=warnings,section_stats=tuple(section_stats),performance_ms={**aggregate.as_dict(),'total':int((time.monotonic()-started)*1000)})
     if not allp: raise RuntimeError(f'{store_name} no entregó productos.')
     return CollectionBatch(products=list(allp.values()),stats=stats)

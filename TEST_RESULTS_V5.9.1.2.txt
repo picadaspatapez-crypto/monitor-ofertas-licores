@@ -1,0 +1,13 @@
+v5.9.1.2 — Vinos La Reina 202 Resilience
+
+pytest -q: 226 passed
+python -m compileall -q app tests: OK
+Database migrations: none
+
+Regression coverage added:
+- HTTP 202 -> no-cache retry
+- repeated HTTP 202 -> Playwright fallback
+- HTTP 200 without product markup -> recovery path
+- terminal page HTTP 404 -> no browser fallback
+- cache-buster preserves existing query parameters
+- no top-level Playwright import in vinoslareina collector
