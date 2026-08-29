@@ -1,0 +1,5 @@
+pytest: 217 passed
+python compileall app: OK
+Nueva migración: NO
+Collectors nuevos: licorescl, centralvinos, vinoslareina
+requires_browser: False / False / False

@@ -1,3 +1,3 @@
-__version__ = "5.9.0.2"
+__version__ = "5.9.1"
 APP_VERSION = __version__
-RELEASE_NAME = "Store Expansion Wave 1"
+RELEASE_NAME = "Store Expansion Wave 2"
