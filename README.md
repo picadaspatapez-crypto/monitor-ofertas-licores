@@ -1,5 +1,15 @@
 # Monitor de Ofertas de Licores
 
+## v5.9.2 — Expansion Consolidation
+
+La rama v5.9 incorpora seis tiendas nuevas y ahora incluye una auditoría de consolidación que revisa las últimas ejecuciones, estabilidad de cardinalidad, Data Quality, canonicalización, matching cercano al umbral, duración, brechas extremas de precio y crecimiento del historial.
+
+- Telegram: `/auditoria` (alias `/consolidacion`).
+- El reporte automático espera por defecto 3 ejecuciones terminadas por cada tienda nueva.
+- Si las seis quedan `STABLE`, se envía una confirmación única de cierre de v5.9.
+- No agrega migraciones ni cambia los collectors ya estabilizados.
+
+
 **Versión actual: v5.8.0 — Commercial Intelligence 2.0.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial,

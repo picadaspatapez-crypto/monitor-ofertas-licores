@@ -1,3 +1,16 @@
+# v5.9.2 — Expansion Consolidation
+
+- Nueva auditoría de las seis tiendas incorporadas en v5.9.
+- Ventana configurable de 3 ejecuciones por tienda.
+- Veredicto `STABLE`, `WATCH` o `NOT_READY`.
+- Control de variación de cardinalidad, HEALTHY rate, canonicalización y Data Quality.
+- Visibilidad de matching cercano al umbral 86% y cola de revisión pendiente.
+- Detección de brechas extremas >=2,5x entre comparables activos.
+- Métricas de crecimiento del historial y tamaño de PostgreSQL cuando está disponible.
+- Nuevo comando Telegram `/auditoria` (`/consolidacion`, `/expansion`).
+- Reporte automático opcional y deduplicado; una consolidación `STABLE` se anuncia una sola vez.
+- Sin migraciones de base de datos y sin cambios en collectors de producción.
+
 ## v5.8.2 — Pack Identity Guard Hotfix
 
 - Corrige detección de multipacks expresados como `X6 750 ml`, `750 cc x6`, `X12`, etc., aunque el nombre no contenga la palabra `pack`.

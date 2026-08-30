@@ -1,0 +1,13 @@
+v5.9.2 — Expansion Consolidation
+
+Validación completa:
+- pytest -q: 230 passed
+- python -m compileall -q app tests: OK
+- nuevas migraciones: ninguna
+- collectors modificados: ninguno
+
+Pruebas específicas añadidas:
+- alias Telegram /auditoria /consolidacion /expansion
+- STABLE tras 3 ciclos HEALTHY estables
+- WATCH ante un BROKEN reciente
+- NOT_READY cuando faltan ciclos

@@ -21,6 +21,7 @@ def test_command_parser_accepts_plain_text_and_bot_mentions():
     assert parse_command("/buscar@MiBot jack honey").query == "jack honey"
     assert parse_command("/buscar").name == "search_help"
     assert parse_command("/estado").name == "status"
+    assert parse_command("/auditoria").name == "expansion_audit"
     assert parse_command("/start").name == "help"
 
 

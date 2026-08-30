@@ -16,6 +16,7 @@ from app.favorites import (
 from app.intelligence.queries import commercial_radar, historical_floor_opportunities, top_opportunities
 from app.intelligence.personal import top_personal_opportunities
 from app.models import MasterProduct, Product, ScrapeRun, Store, TelegramFavorite
+from app.reports.consolidation import build_expansion_consolidation_report
 from app.search.web import SearchApplication
 from app.telegram_bot.api import TelegramAPI, TelegramAPIError
 from app.telegram_bot.commands import BotCommand, parse_command
@@ -252,6 +253,15 @@ class TelegramSearchBot:
             except Exception as exc:
                 print(f"BOT quality error ({type(exc).__name__}: {exc}).", flush=True)
                 text = "⚠️ No pude consultar la calidad de datos en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "expansion_audit":
+            try:
+                with self.application.SessionLocal() as session:
+                    text = build_expansion_consolidation_report(session, runs_per_store=3)
+            except Exception as exc:
+                print(f"BOT expansion audit error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude generar la auditoría de consolidación en este momento."
             self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
         if command.name == "history":

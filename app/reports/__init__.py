@@ -15,6 +15,15 @@ from app.reports.telegram import (
     build_telegram_messages,
     ranked_best_prices,
 )
+from app.reports.global_summary import build_global_run_summary
+from app.reports.consolidation import (
+    EXPANSION_CONNECTOR_KEYS,
+    ExpansionConsolidationAudit,
+    StoreConsolidationView,
+    build_expansion_consolidation_audit,
+    build_expansion_consolidation_report,
+    format_expansion_consolidation_report,
+)
 
 __all__ = [
     "build_telegram_messages",
@@ -30,6 +39,11 @@ __all__ = [
     "build_new_products_message",
     "build_ranking_messages",
     "ranked_best_prices",
+    "build_global_run_summary",
+    "EXPANSION_CONNECTOR_KEYS",
+    "ExpansionConsolidationAudit",
+    "StoreConsolidationView",
+    "build_expansion_consolidation_audit",
+    "build_expansion_consolidation_report",
+    "format_expansion_consolidation_report",
 ]
-
-from app.reports.global_summary import build_global_run_summary

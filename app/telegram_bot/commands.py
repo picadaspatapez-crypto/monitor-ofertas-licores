@@ -53,6 +53,8 @@ def parse_command(text: str | None) -> BotCommand:
         return BotCommand("status")
     if command in {"/quality", "/calidad"}:
         return BotCommand("quality")
+    if command in {"/auditoria", "/consolidacion", "/consolidación", "/expansion", "/expansión"}:
+        return BotCommand("expansion_audit")
     if command == "/mas":
         return BotCommand("search_more")
     if command == "/historial":

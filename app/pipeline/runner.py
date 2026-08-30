@@ -59,6 +59,10 @@ from app.services import (
 )
 from app.reports.global_summary import build_global_run_summary
 from app.reports.health import build_weekly_health_report
+from app.reports.consolidation import (
+    build_expansion_consolidation_audit,
+    format_expansion_consolidation_report,
+)
 from app.search.catalog import refresh_search_catalog
 from app.version import RELEASE_NAME, __version__
 from sqlalchemy import select
@@ -1206,6 +1210,78 @@ def _run_weekly_health_stage(
         )
 
 
+def _run_expansion_audit_stage(
+    *,
+    SessionLocal,
+    settings: Settings,
+    timeout_minutes: int,
+) -> None:
+    if not settings.expansion_audit_report:
+        return
+    now = datetime.now(timezone.utc)
+    try:
+        with SessionLocal() as session:
+            audit = build_expansion_consolidation_audit(
+                session,
+                runs_per_store=settings.expansion_audit_runs_per_store,
+                timeout_minutes=timeout_minutes,
+                match_threshold=settings.cross_store_match_min_confidence,
+            )
+            if not audit.enough_history:
+                print(
+                    "Auditoría expansión v5.9: esperando ciclos suficientes "+
+                    f"({settings.expansion_audit_runs_per_store} por tienda).",
+                    flush=True,
+                )
+                return
+            last = latest_sent_alert(
+                session, store_id=None, alert_type="expansion_consolidation_report"
+            )
+            if last is not None and last.sent_at is not None:
+                sent_at = last.sent_at
+                if sent_at.tzinfo is None:
+                    sent_at = sent_at.replace(tzinfo=timezone.utc)
+                if now - sent_at < timedelta(hours=settings.expansion_audit_interval_hours):
+                    print("Auditoría expansión v5.9: todavía no corresponde.", flush=True)
+                    return
+            message = format_expansion_consolidation_report(
+                audit, runs_per_store=settings.expansion_audit_runs_per_store
+            )
+
+        payload_hash = hashlib.sha256(message.encode("utf-8")).hexdigest()
+        if audit.stable:
+            deduplication_key = "expansion-audit:v5.9.2:stable"
+        else:
+            day_token = now.strftime("%Y-%m-%d")
+            deduplication_key = f"expansion-audit:{day_token}:{payload_hash[:12]}"
+        bundle = NotificationBundle(
+            store_id=None,
+            run_id=None,
+            alert_type="expansion_consolidation_report",
+            deduplication_key=deduplication_key,
+            payload_hash=payload_hash,
+            reason=f"auditoría de consolidación v5.9: {audit.verdict}",
+            messages=(message,),
+        )
+        sent, skipped, failed = deliver_notification_bundles(
+            SessionLocal=SessionLocal,
+            bundles=[bundle],
+            telegram_bot_token=settings.telegram_bot_token,
+            telegram_chat_id=settings.telegram_chat_id,
+            send_message_fn=send_message,
+        )
+        print(
+            f"Auditoría expansión v5.9: enviados={sent}, omitidos={skipped}, fallidos={failed}, veredicto={audit.verdict}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"⚠ No se pudo generar la auditoría de expansión: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _pipeline_exit_code(results: list[CollectorExecution]) -> int:
     """Una ejecución es operativa si existe al menos un catálogo actualizado o vigente."""
 
@@ -1378,6 +1454,11 @@ def run_pipeline() -> int:
         results=results,
     )
     _run_weekly_health_stage(
+        SessionLocal=SessionLocal,
+        settings=settings,
+        timeout_minutes=performance.collector_timeout_minutes,
+    )
+    _run_expansion_audit_stage(
         SessionLocal=SessionLocal,
         settings=settings,
         timeout_minutes=performance.collector_timeout_minutes,

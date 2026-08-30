@@ -80,6 +80,9 @@ class Settings:
     availability_missing_threshold: int
     weekly_health_report: bool
     weekly_health_interval_hours: int
+    expansion_audit_report: bool
+    expansion_audit_interval_hours: int
+    expansion_audit_runs_per_store: int
     opportunity_report_limit: int
     personal_price_audiences: tuple[str, ...]
     personal_alerts_enabled: bool
@@ -134,6 +137,13 @@ class Settings:
             weekly_health_report=_bool_env("WEEKLY_HEALTH_REPORT", True),
             weekly_health_interval_hours=_positive_int(
                 "WEEKLY_HEALTH_INTERVAL_HOURS", 168
+            ),
+            expansion_audit_report=_bool_env("EXPANSION_AUDIT_REPORT", True),
+            expansion_audit_interval_hours=_positive_int(
+                "EXPANSION_AUDIT_INTERVAL_HOURS", 24
+            ),
+            expansion_audit_runs_per_store=_positive_int(
+                "EXPANSION_AUDIT_RUNS_PER_STORE", 3, minimum=2
             ),
             opportunity_report_limit=_positive_int(
                 "OPPORTUNITY_REPORT_LIMIT", 20

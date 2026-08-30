@@ -49,7 +49,8 @@ def help_message(bot_username: str | None = None) -> str:
         f"<code>/misfavoritos</code>\n"
         f"<code>/eliminarfavorito 3</code>\n\n"
         f"Estado de collectors: <code>/estado</code>.\n"
-        f"Calidad de datos: <code>/quality</code>.\n\n"
+        f"Calidad de datos: <code>/quality</code>.\n"
+        f"Auditoría de la expansión v5.9: <code>/auditoria</code>.\n\n"
         f"El bot consulta PostgreSQL; no abre las tiendas en cada búsqueda."
     )
 
