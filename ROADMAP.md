@@ -1,6 +1,6 @@
 # Roadmap — Monitor de Ofertas de Licores
 
-## Estado actual: v5.9.2 — Expansion Consolidation
+## Estado actual: v6.0.0 — Watchlists
 
 La expansión v5.9 quedó implementada en dos olas y cerrada con una capa de auditoría operativa.
 
@@ -45,16 +45,18 @@ La auditoría considera `STABLE` una tienda sólo cuando dispone de suficientes 
 - v5.9.1.x: expansión ola 2 y estabilización.
 - v5.9.2: consolidación de la expansión.
 
-## Siguiente: v6.0 — Watchlists y dashboard
+## v6.0.0 — Watchlists completado
 
-Orden propuesto:
+Implementado:
 
-### v6.0.0 — Watchlists
 - precio objetivo por producto;
 - Opportunity Score mínimo configurable;
 - condición de nuevo mínimo histórico;
 - ventaja CAV contra mercado público;
-- deduplicación y estado persistente reutilizando la infraestructura de favoritos.
+- deduplicación y estado persistente reutilizando la infraestructura de favoritos;
+- `/vigilar`, `/watchlist` y `/quitarwatch`.
+
+## Siguiente: v6.0.1 — Alertas configurables
 
 ### v6.0.1 — Alertas configurables
 - reglas combinables por precio, score, mínimo histórico y ventaja;

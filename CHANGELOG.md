@@ -1,3 +1,17 @@
+# v6.0.0 — Watchlists
+
+- Primera versión de la rama 6.x orientada a decisiones personales persistentes.
+- Nuevo comando Telegram `/vigilar` con cuatro reglas: precio objetivo, Opportunity Score mínimo, nuevo mínimo histórico y ventaja CAV contra mercado público.
+- Nuevo `/watchlist` para revisar reglas y estado actual; `/quitarwatch ID` desactiva la watchlist.
+- Reutiliza `telegram_favorites` y `favorite_alerts`; no duplica catálogo, matching ni destinatarios.
+- Estado persistente `watch_state` para avisar sólo en transiciones relevantes y evitar spam.
+- Los nuevos mínimos históricos se deduplican por precio nuevo + mínimo anterior.
+- Las reglas CAV sólo se cumplen cuando el ganador personal es `MEMBER/cav_member`.
+- `/favorito`, `/avisar` y la lógica anterior permanecen compatibles.
+- Migración Alembic `0013_watchlists`.
+- Sin cambios en collectors, scheduler, Matching 2.0 ni Data Quality.
+- Suite total: 237 pruebas.
+
 # v5.9.2 — Expansion Consolidation
 
 - Nueva auditoría de las seis tiendas incorporadas en v5.9.

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.favorites.service import FavoriteResolution, FavoriteView
+from app.favorites.service import FavoriteResolution, FavoriteView, WatchlistView
 from app.intelligence.queries import OpportunityView
 from app.search.engine import SearchResult
 from app.search.formatting import format_clp, format_datetime_cl
@@ -43,11 +43,16 @@ def help_message(bot_username: str | None = None) -> str:
         f"<code>/miprecio johnnie black 750</code>\n"
         f"<code>/personal</code>\n"
         f"<code>/historialsocio johnnie black 750</code>\n\n"
-        f"⭐ <b>Favoritos y avisos</b>\n"
+        f"⭐ <b>Favoritos</b>\n"
         f"<code>/favorito johnnie black 750</code>\n"
-        f"<code>/avisar johnnie black 750 bajo 25000</code>\n"
-        f"<code>/misfavoritos</code>\n"
-        f"<code>/eliminarfavorito 3</code>\n\n"
+        f"<code>/misfavoritos</code>\n\n"
+        f"🎯 <b>Watchlists v6</b>\n"
+        f"<code>/vigilar johnnie black 750 bajo 25000</code>\n"
+        f"<code>/vigilar johnnie black 750 score 90</code>\n"
+        f"<code>/vigilar johnnie black 750 minimo</code>\n"
+        f"<code>/vigilar johnnie black 750 cav 3000</code>\n"
+        f"<code>/watchlist</code>\n"
+        f"<code>/quitarwatch 3</code>\n\n"
         f"Estado de collectors: <code>/estado</code>.\n"
         f"Calidad de datos: <code>/quality</code>.\n"
         f"Auditoría de la expansión v5.9: <code>/auditoria</code>.\n\n"
@@ -88,6 +93,29 @@ def favorite_delete_help_message() -> str:
     return (
         "Usa el número mostrado por <code>/misfavoritos</code>.\n\n"
         "Ejemplo: <code>/eliminarfavorito 3</code>"
+    )
+
+
+def watch_help_message() -> str:
+    return (
+        "🎯 <b>Watchlists v6</b>\n\n"
+        "Configura una condición sobre un producto. Ejemplos:\n"
+        "<code>/vigilar johnnie black 750 bajo 25000</code>\n"
+        "<code>/vigilar johnnie black 750 score 90</code>\n"
+        "<code>/vigilar johnnie black 750 minimo</code>\n"
+        "<code>/vigilar johnnie black 750 cav 3000</code>\n\n"
+        "<b>bajo</b>: precio público objetivo.\n"
+        "<b>score</b>: Opportunity Score mínimo (0–100).\n"
+        "<b>minimo</b>: avisar sólo ante un nuevo mínimo histórico.\n"
+        "<b>cav</b>: ventaja mínima en pesos del precio socio CAV frente al mejor público.\n\n"
+        "Ver reglas: <code>/watchlist</code>."
+    )
+
+
+def watch_delete_help_message() -> str:
+    return (
+        "Usa el ID mostrado por <code>/watchlist</code>.\n\n"
+        "Ejemplo: <code>/quitarwatch 3</code>"
     )
 
 
@@ -434,6 +462,99 @@ def format_favorite_deleted(favorite_id: int, deleted: bool) -> str:
         f"No encontré un favorito activo con ID <b>{favorite_id}</b>.\n"
         "Consulta <code>/misfavoritos</code>."
     )
+
+
+def _watch_rules_lines(view: WatchlistView) -> list[str]:
+    lines: list[str] = []
+    if view.target_price is not None:
+        current = view.snapshot.winner.price if view.snapshot.winner is not None else None
+        if current is None:
+            status = "sin precio reciente"
+        elif current <= view.target_price:
+            status = "✅ alcanzado"
+        else:
+            status = f"faltan {format_clp(current - view.target_price)}"
+        lines.append(f"🎯 Precio ≤ {format_clp(view.target_price)} · {status}")
+    if view.min_opportunity_score is not None:
+        current_score = view.opportunity_score
+        status = (
+            "sin score"
+            if current_score is None
+            else ("✅ alcanzado" if current_score >= view.min_opportunity_score else f"actual {current_score:.1f}")
+        )
+        lines.append(f"📊 Score ≥ {view.min_opportunity_score:.1f} · {status}")
+    if view.notify_on_new_historical_min:
+        event = str(view.price_event or "NORMAL")
+        status = "🚨 nuevo mínimo ahora" if event == "NEW_HISTORICAL_MIN" else "esperando nuevo mínimo"
+        lines.append(f"📉 Nuevo mínimo histórico · {status}")
+    if view.min_personal_advantage_clp is not None:
+        current_advantage = view.personal_advantage_clp
+        is_cav = str(view.personal_winner_audience or "").casefold() == "cav_member"
+        if current_advantage is None or not is_cav:
+            status = "sin ventaja CAV vigente"
+        elif current_advantage >= view.min_personal_advantage_clp:
+            status = f"✅ {format_clp(current_advantage)}"
+        else:
+            status = f"actual {format_clp(current_advantage)}"
+        lines.append(
+            f"🟣 CAV ≥ {format_clp(view.min_personal_advantage_clp)} de ventaja · {status}"
+        )
+    return lines
+
+
+def format_watchlist_saved(
+    *,
+    result: SearchResult,
+    favorite_id: int,
+    created: bool,
+    rule: str,
+    value: int | None,
+    view: WatchlistView | None = None,
+) -> str:
+    action = "creada" if created else "actualizada"
+    labels = {
+        "target": f"precio ≤ {format_clp(int(value or 0))}",
+        "score": f"Opportunity Score ≥ {int(value or 0)}",
+        "historical_min": "nuevo mínimo histórico",
+        "cav_advantage": f"ventaja CAV ≥ {format_clp(int(value or 0))}",
+    }
+    lines = [
+        f"🎯 Watchlist {action}",
+        "",
+        f"<b>{_escape(result.canonical_name)}</b>",
+        f"ID: <code>{favorite_id}</code>",
+        f"Regla: <b>{_escape(labels.get(rule, rule))}</b>",
+    ]
+    if result.winner is not None:
+        lines.append(
+            f"Precio público actual: <b>{format_clp(result.winner.price)}</b> · {_escape(result.winner.store_name)}"
+        )
+    if view is not None:
+        lines.extend(["", *(_watch_rules_lines(view))])
+    lines.extend(["", "Te avisaré cuando la condición pase de no cumplida a cumplida."])
+    return "\n".join(lines)[:4000]
+
+
+def format_watchlists_list(views: list[WatchlistView]) -> str:
+    if not views:
+        return (
+            "🎯 No tienes watchlists activas.\n\n"
+            "Crea una con <code>/vigilar producto bajo 25000</code>."
+        )
+    lines = ["🎯 <b>Mis watchlists</b>", ""]
+    for view in views:
+        details = f" · {view.volume_ml} ml" if view.volume_ml else ""
+        lines.append(f"<b>{view.favorite_id}.</b> {_escape(view.canonical_name)}{details}")
+        if view.snapshot.winner is not None:
+            lines.append(
+                f"   🥇 {_escape(view.snapshot.winner.store_name)}: "
+                f"<b>{format_clp(view.snapshot.winner.price)}</b>"
+            )
+        for rule_line in _watch_rules_lines(view):
+            lines.append(f"   {rule_line}")
+        lines.append("")
+    lines.append("Eliminar: <code>/quitarwatch ID</code>")
+    return "\n".join(lines)[:4000]
 
 
 def personal_history_help_message() -> str:

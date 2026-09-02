@@ -517,6 +517,10 @@ class TelegramFavorite(Base):
         ForeignKey("master_products.id"), index=True
     )
     target_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_opportunity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notify_on_new_historical_min: Mapped[bool] = mapped_column(Boolean, default=False)
+    min_personal_advantage_clp: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    watch_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     notify_on_price_drop: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_on_new_store: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_on_winner_change: Mapped[bool] = mapped_column(Boolean, default=True)

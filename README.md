@@ -1,20 +1,32 @@
 # Monitor de Ofertas de Licores
 
-## v5.9.2 — Expansion Consolidation
+## v6.0.0 — Watchlists
 
-La rama v5.9 incorpora seis tiendas nuevas y ahora incluye una auditoría de consolidación que revisa las últimas ejecuciones, estabilidad de cardinalidad, Data Quality, canonicalización, matching cercano al umbral, duración, brechas extremas de precio y crecimiento del historial.
+La rama 6.x comienza convirtiendo la inteligencia acumulada en condiciones personales persistentes. Las watchlists reutilizan la infraestructura probada de favoritos, pero permiten esperar señales concretas sin revisar manualmente el catálogo.
 
-- Telegram: `/auditoria` (alias `/consolidacion`).
-- El reporte automático espera por defecto 3 ejecuciones terminadas por cada tienda nueva.
-- Si las seis quedan `STABLE`, se envía una confirmación única de cierre de v5.9.
-- No agrega migraciones ni cambia los collectors ya estabilizados.
+Reglas disponibles en v6.0.0:
 
+- precio público objetivo;
+- Opportunity Score mínimo;
+- nuevo mínimo histórico;
+- ventaja mínima del precio socio CAV frente al mejor precio público.
 
-**Versión actual: v5.8.0 — Commercial Intelligence 2.0.**
+Telegram:
 
-Plataforma chilena multi-tienda para recolectar precios, mantener historial,
-comparar productos equivalentes, medir oportunidades reales y consultar el
-catálogo desde web o Telegram.
+```text
+/vigilar johnnie black 750 bajo 25000
+/vigilar johnnie black 750 score 90
+/vigilar johnnie black 750 minimo
+/vigilar johnnie black 750 cav 3000
+/watchlist
+/quitarwatch 3
+```
+
+Cada condición guarda estado persistente y sólo avisa al pasar de **no cumplida** a **cumplida**. Los nuevos mínimos históricos se deduplican por el par mínimo actual/mínimo anterior.
+
+**Versión actual: v6.0.0 — Watchlists.**
+
+Plataforma chilena multi-tienda para recolectar precios, mantener historial, comparar productos equivalentes, medir oportunidades reales y consultar el catálogo desde web o Telegram.
 
 ## Tiendas activas
 
@@ -28,6 +40,12 @@ catálogo desde web o Telegram.
 - Distribuidora La Modelo
 - Socomep
 - La Vinoteca
+- La Koka
+- El Brindis
+- Rancho Wines
+- Licores.cl
+- Central Vinos y Licores
+- Tienda de Vinos La Reina
 
 ### Fuente híbrida pública/personal
 

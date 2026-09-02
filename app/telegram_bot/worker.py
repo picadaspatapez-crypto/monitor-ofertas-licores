@@ -9,8 +9,10 @@ from sqlalchemy import func, select
 
 from app.favorites import (
     add_or_update_favorite,
+    configure_watchlist,
     deactivate_favorite,
     list_favorites,
+    list_watchlists,
     resolve_favorite_query,
 )
 from app.intelligence.queries import commercial_radar, historical_floor_opportunities, top_opportunities
@@ -42,6 +44,10 @@ from app.telegram_bot.formatting import (
     status_message,
     StoreStatusView,
     unauthorized_message,
+    watch_delete_help_message,
+    watch_help_message,
+    format_watchlist_saved,
+    format_watchlists_list,
 )
 from app.telegram_bot.state import (
     load_next_update_id,
@@ -381,6 +387,97 @@ class TelegramSearchBot:
             except Exception as exc:
                 print(f"BOT personal opportunities error ({type(exc).__name__}: {exc}).", flush=True)
                 text = "⚠️ No pude consultar la vista personal en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "watch_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=watch_help_message(),
+            )
+            return
+        if command.name == "watch_delete_help":
+            self._send(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=watch_delete_help_message(),
+            )
+            return
+        if command.name in {"watch_target", "watch_score", "watch_historical_min", "watch_cav"}:
+            rule_map = {
+                "watch_target": "target",
+                "watch_score": "score",
+                "watch_historical_min": "historical_min",
+                "watch_cav": "cav_advantage",
+            }
+            rule = rule_map[command.name]
+            try:
+                with self.application.SessionLocal() as session:
+                    resolution = resolve_favorite_query(
+                        session,
+                        command.query,
+                        max_age_hours=self.settings.max_age_hours,
+                    )
+                    if resolution.result is None:
+                        text = format_favorite_resolution_error(command.query, resolution)
+                    else:
+                        favorite, created = configure_watchlist(
+                            session,
+                            chat_id=chat_id,
+                            result=resolution.result,
+                            rule=rule,
+                            value=command.value,
+                        )
+                        views = list_watchlists(
+                            session,
+                            chat_id=chat_id,
+                            max_age_hours=self.settings.max_age_hours,
+                        )
+                        view = next(
+                            (item for item in views if item.favorite_id == int(favorite.id)),
+                            None,
+                        )
+                        text = format_watchlist_saved(
+                            result=resolution.result,
+                            favorite_id=int(favorite.id),
+                            created=created,
+                            rule=rule,
+                            value=command.value,
+                            view=view,
+                        )
+                        session.commit()
+            except Exception as exc:
+                print(f"BOT watchlist error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude guardar la watchlist en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "watch_list":
+            try:
+                with self.application.SessionLocal() as session:
+                    views = list_watchlists(
+                        session,
+                        chat_id=chat_id,
+                        max_age_hours=self.settings.max_age_hours,
+                    )
+                text = format_watchlists_list(views)
+            except Exception as exc:
+                print(f"BOT watchlist list error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude consultar tus watchlists en este momento."
+            self._send(chat_id=chat_id, message_id=message_id, text=text)
+            return
+        if command.name == "watch_delete":
+            try:
+                with self.application.SessionLocal() as session:
+                    deleted = deactivate_favorite(
+                        session,
+                        chat_id=chat_id,
+                        favorite_id=int(command.value or 0),
+                    )
+                    session.commit()
+                text = format_favorite_deleted(int(command.value or 0), deleted)
+            except Exception as exc:
+                print(f"BOT watchlist delete error ({type(exc).__name__}: {exc}).", flush=True)
+                text = "⚠️ No pude eliminar la watchlist en este momento."
             self._send(chat_id=chat_id, message_id=message_id, text=text)
             return
         if command.name == "favorite_help":

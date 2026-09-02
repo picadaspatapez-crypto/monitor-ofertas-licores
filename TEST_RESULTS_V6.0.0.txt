@@ -1,0 +1,15 @@
+v6.0.0 — Watchlists
+
+Validation date: 2026-09-02
+
+python -m compileall -q app alembic/versions
+RESULT: OK
+
+pytest -q
+RESULT: 237 passed
+
+Database migration:
+0013_watchlists -> head
+
+Collectors modified: NONE
+New mandatory environment variables: NONE

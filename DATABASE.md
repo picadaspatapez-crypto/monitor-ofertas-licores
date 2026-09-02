@@ -973,3 +973,21 @@ Migración: `0011_canonical_matching_quality`.
 `data_quality_events`: auditoría inmutable del score y los issues detectados en cada observación.
 
 Los registros bloqueados **no se eliminan**. Continúan disponibles para auditoría e historial, pero `excluded_from_comparison=true` impide que modifiquen resultados comerciales.
+
+
+---
+
+## v6.0.0 — Watchlists
+
+Migración: `0013_watchlists`, dependiente de `0012_commercial_intelligence`.
+
+Columnas nuevas en `telegram_favorites`:
+
+| Columna | Tipo | Uso |
+|---|---|---|
+| `min_opportunity_score` | FLOAT nullable | Umbral 0–100 para Opportunity Score |
+| `notify_on_new_historical_min` | BOOLEAN | Vigilar rupturas reales del mínimo histórico |
+| `min_personal_advantage_clp` | INTEGER nullable | Ventaja mínima de CAV frente al mejor público |
+| `watch_state` | JSON nullable | Estado persistente de condiciones y deduplicación |
+
+No se crean tablas nuevas. Las watchlists reutilizan `telegram_favorites` como definición y `favorite_alerts` como cola de entrega.

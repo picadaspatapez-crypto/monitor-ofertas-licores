@@ -59,6 +59,9 @@ class TelegramAPI:
     def set_commands(self) -> bool:
         commands = [
             {"command": "buscar", "description": "Buscar y comparar un producto"},
+            {"command": "vigilar", "description": "Crear o actualizar una watchlist"},
+            {"command": "watchlist", "description": "Ver tus watchlists activas"},
+            {"command": "quitarwatch", "description": "Eliminar una watchlist por ID"},
             {"command": "favorito", "description": "Seguir un producto"},
             {"command": "avisar", "description": "Crear una alerta de precio objetivo"},
             {"command": "misfavoritos", "description": "Ver tus productos seguidos"},
