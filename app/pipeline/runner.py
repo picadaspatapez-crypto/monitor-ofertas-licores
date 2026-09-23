@@ -68,6 +68,19 @@ from app.version import RELEASE_NAME, __version__
 from sqlalchemy import select
 
 
+STALE_RECOVERY_COLLECTORS = frozenset({
+    "elmundodelvino",
+    "lamodelo",
+    "lavinoteca",
+    "cav",
+    "vinoslareina",
+})
+
+
+def _supports_stale_recovery(collector_key: str) -> bool:
+    return collector_key in STALE_RECOVERY_COLLECTORS
+
+
 @dataclass(frozen=True)
 class CollectorExecution:
     key: str
@@ -752,9 +765,10 @@ def _run_collector(
         )
 
     except Exception as exc:
-        # El Mundo del Vino mantiene el último snapshot HEALTHY si el intento
-        # actual falla por 429, timeout u otra inestabilidad de red.
-        if collector.key == "elmundodelvino" and store_id is not None:
+        # Fuentes externas propensas a 403/5xx/timeouts conservan el último
+        # snapshot HEALTHY. El intento fallido queda registrado como STALE y no
+        # bloquea comparaciones/watchlists con un catálogo parcial.
+        if _supports_stale_recovery(collector.key) and store_id is not None:
             try:
                 with SessionLocal() as session:
                     snapshot = _latest_healthy_snapshot(
@@ -771,7 +785,7 @@ def _run_collector(
                     )
                     total_ms = int((time.monotonic() - started) * 1000)
                     print(
-                        f"🟠 El Mundo del Vino quedó STALE tras {type(exc).__name__}; "
+                        f"🟠 {collector.store_name} quedó STALE tras {type(exc).__name__}; "
                         f"se reutiliza snapshot HEALTHY de {snapshot.products_found} productos.",
                         flush=True,
                     )
@@ -792,7 +806,7 @@ def _run_collector(
                     )
             except Exception as stale_error:
                 print(
-                    f"⚠ No se pudo reutilizar snapshot de El Mundo del Vino: {stale_error}",
+                    f"⚠ No se pudo reutilizar snapshot HEALTHY de {collector.store_name}: {stale_error}",
                     file=sys.stderr,
                     flush=True,
                 )

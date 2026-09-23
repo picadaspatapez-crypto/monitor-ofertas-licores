@@ -1,6 +1,6 @@
 # Monitor de Ofertas de Licores
 
-## v6.0.0 — Watchlists
+## v6.0.0.1 — Watchlists + Source Resilience
 
 La rama 6.x comienza convirtiendo la inteligencia acumulada en condiciones personales persistentes. Las watchlists reutilizan la infraestructura probada de favoritos, pero permiten esperar señales concretas sin revisar manualmente el catálogo.
 
@@ -24,7 +24,14 @@ Telegram:
 
 Cada condición guarda estado persistente y sólo avisa al pasar de **no cumplida** a **cumplida**. Los nuevos mínimos históricos se deduplican por el par mínimo actual/mínimo anterior.
 
-**Versión actual: v6.0.0 — Watchlists.**
+### Hotfix de resiliencia v6.0.0.1
+
+- CAV usa la ruta raíz actual para descubrir catálogo.
+- La Vinoteca divide ventanas VTEX que fallan con 5xx antes de rendirse.
+- Vinos La Reina mantiene una sesión Chromium temporal tras respuestas 202/interstitial.
+- Fuentes externas conocidas pueden reutilizar el último snapshot HEALTHY como `STALE`, sin persistir capturas parciales y sin bloquear innecesariamente comparaciones/watchlists.
+
+**Versión actual: v6.0.0.1 — Watchlists + Source Resilience.**
 
 Plataforma chilena multi-tienda para recolectar precios, mantener historial, comparar productos equivalentes, medir oportunidades reales y consultar el catálogo desde web o Telegram.
 

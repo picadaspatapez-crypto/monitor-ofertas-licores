@@ -1,0 +1,14 @@
+app/collectors/cav.py
+app/collectors/lavinoteca.py
+app/collectors/vinoslareina.py
+app/pipeline/runner.py
+app/version.py
+tests/test_version.py
+tests/test_v60001_source_resilience.py
+CHANGELOG.md
+README.md
+ROADMAP.md
+README-HOTFIX.md
+README_V6.0.0.1.md
+DEPLOY_V6.0.0.1.md
+TEST_RESULTS_V6.0.0.1.txt

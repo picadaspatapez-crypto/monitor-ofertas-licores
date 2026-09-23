@@ -1,20 +1,25 @@
-# v6.0.0 — Watchlists Hotfix / Upgrade Package
+# v6.0.0.1 — Source Resilience Hotfix
 
-Base requerida: **v5.9.2 — Expansion Consolidation**.
+Base requerida: **v6.0.0 — Watchlists**.
 
-Este paquete incorpora la primera versión de la rama v6:
+Este hotfix corrige fallos externos observados durante varios días sin cambiar el modelo de datos ni la lógica de watchlists.
 
-- `/vigilar PRODUCTO bajo PRECIO`
-- `/vigilar PRODUCTO score N`
-- `/vigilar PRODUCTO minimo`
-- `/vigilar PRODUCTO cav MONTO`
-- `/watchlist`
-- `/quitarwatch ID`
+## Cambios
 
-## Importante
+- **CAV:** el listado usa la ruta raíz actual de la tienda; las fichas `/tienda/producto/...` se mantienen.
+- **La Vinoteca:** HTTP 5xx persistente en una ventana VTEX se recupera dividiendo el rango de forma adaptativa.
+- **Tienda de Vinos La Reina:** el fallback Chromium realiza hasta 3 intentos y conserva una sesión temporal para páginas siguientes.
+- **La Modelo / La Vinoteca / CAV / Vinos La Reina / El Mundo del Vino:** si una fuente externa falla y existe un snapshot HEALTHY anterior, el ciclo queda `STALE` y reutiliza ese catálogo para comparaciones/watchlists.
 
-Esta versión **sí cambia el esquema**. Debe aplicarse `alembic upgrade head` y quedar en `0013_watchlists`.
+## Seguridad de datos
 
-No modifica collectors, Matching 2.0, Data Quality, scheduler ni la política híbrida de CAV.
+Una captura parcial o fallida **no se persiste como catálogo sano**. El intento queda registrado y, cuando corresponde, se utiliza únicamente el último snapshot HEALTHY conocido.
 
-Pruebas: **237 passed**.
+## Base de datos
+
+No hay migración nueva. Alembic continúa en `0013_watchlists`.
+
+## Validación
+
+- `python -m compileall -q app tests`: OK
+- `pytest -q`: **241 passed**

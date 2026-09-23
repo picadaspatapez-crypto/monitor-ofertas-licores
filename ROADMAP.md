@@ -1,6 +1,6 @@
 # Roadmap — Monitor de Ofertas de Licores
 
-## Estado actual: v6.0.0 — Watchlists
+## Estado actual: v6.0.0.1 — Watchlists + Source Resilience
 
 La expansión v5.9 quedó implementada en dos olas y cerrada con una capa de auditoría operativa.
 
@@ -55,6 +55,10 @@ Implementado:
 - ventaja CAV contra mercado público;
 - deduplicación y estado persistente reutilizando la infraestructura de favoritos;
 - `/vigilar`, `/watchlist` y `/quitarwatch`.
+
+## v6.0.0.1 — Source Resilience Hotfix
+
+Estabilización operativa sin ampliar alcance funcional: CAV adapta su ruta de catálogo, La Vinoteca recupera ventanas VTEX 5xx por división adaptativa, Vinos La Reina refuerza su sesión Chromium y las fuentes externas conocidas pueden reutilizar el último snapshot HEALTHY como `STALE` ante caídas transitorias. No hay migraciones nuevas.
 
 ## Siguiente: v6.0.1 — Alertas configurables
 

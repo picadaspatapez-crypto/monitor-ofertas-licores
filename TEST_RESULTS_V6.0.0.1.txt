@@ -1,0 +1,17 @@
+v6.0.0.1 — Source Resilience Hotfix
+
+Validation results
+==================
+python -m compileall -q app tests : OK
+pytest -q                         : 241 passed
+
+Database migrations
+===================
+No new migration. Alembic head remains: 0013_watchlists
+
+Focused regression coverage
+===========================
+- CAV listing/discovery uses current root route.
+- La Vinoteca recovers a simulated VTEX 500 window via adaptive range splitting.
+- Vinos La Reina resilient fetcher exposes sticky-browser recovery state.
+- Known transient external collectors are eligible for HEALTHY snapshot reuse as STALE.

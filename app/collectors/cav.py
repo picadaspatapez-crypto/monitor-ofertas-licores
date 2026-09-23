@@ -17,7 +17,7 @@ from app.domain import CollectedPriceQuote, CollectedProduct, CollectionBatch, C
 from app.performance import PerformanceSettings, install_resource_blocking
 
 BASE_URL = "https://cav.cl"
-SHOP_URL = f"{BASE_URL}/tienda"
+SHOP_URL = f"{BASE_URL}/"
 PAGE_SIZE = 48
 MAX_PAGES_PER_SHARD = 30
 # La tienda publica actualmente alrededor de mil productos de vino y más de un
@@ -30,7 +30,8 @@ STATIC_EDITORIAL_CEILING = 35
 PRODUCT_LINK_SELECTOR = 'a[href*="/tienda/producto/"]'
 ALGOLIA_HIT_SELECTOR = ".ais-Hits-item, .ais-InfiniteHits-item, [class*='ais-Hits-item']"
 
-# CAV expone en la URL un estado de búsqueda compatible con InstantSearch:
+# CAV expone actualmente el catálogo/buscador desde la raíz del sitio y
+# mantiene en la URL un estado de búsqueda compatible con InstantSearch:
 # fR[family.name], fR[wine_type.name], hPP, idx, p y q. La búsqueda global se
 # acerca/supera el límite habitual de paginación de Algolia, por lo que el
 # collector no vuelve a recorrer el índice global. Se particiona por familias y,

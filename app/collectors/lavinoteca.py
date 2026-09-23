@@ -23,6 +23,8 @@ MIN_PLAUSIBLE_PRODUCTS = 80
 REQUEST_TIMEOUT = (5, 22)
 SUCCESS_STATUSES = frozenset({200, 206})
 _CONTENT_RANGE_RE = re.compile(r"(?:[A-Za-z-]+\s+)?(\d+)-(\d+)/(\d+|\*)")
+ADAPTIVE_SPLIT_STATUSES = frozenset({500, 502, 503, 504})
+MAX_SPLIT_DEPTH = 3
 
 
 def _session() -> requests.Session:
@@ -94,6 +96,82 @@ def _content_range_total(response: requests.Response) -> int | None:
         return max(0, int(match.group(3)))
     except ValueError:
         return None
+
+
+
+@dataclass(frozen=True)
+class _RangeFetch:
+    payload: tuple[dict, ...]
+    announced_total: int | None
+    terminal: bool = False
+    split_recovered: bool = False
+    statuses: tuple[int, ...] = ()
+
+
+def _fetch_range(
+    session: requests.Session,
+    *,
+    start: int,
+    end: int,
+    metrics: PhaseMetrics,
+    depth: int = 0,
+) -> _RangeFetch:
+    """Fetch a VTEX window and split persistent 5xx ranges into smaller windows."""
+    response = session.get(
+        SEARCH_ENDPOINT,
+        params={"_from": start, "_to": end, "O": "OrderByNameASC"},
+        timeout=bounded_request_timeout(REQUEST_TIMEOUT),
+    )
+    metrics.add("http", int(response.elapsed.total_seconds() * 1000))
+    status = response.status_code
+    if status == 416:
+        return _RangeFetch((), None, terminal=True, statuses=(status,))
+    if status in SUCCESS_STATUSES:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"La Vinoteca VTEX no devolvió JSON válido en rango {start}-{end}."
+            ) from exc
+        if not isinstance(payload, list):
+            raise RuntimeError(
+                f"La Vinoteca VTEX cambió el formato esperado en rango {start}-{end}."
+            )
+        return _RangeFetch(
+            tuple(item for item in payload if isinstance(item, dict)),
+            _content_range_total(response),
+            statuses=(status,),
+        )
+
+    if status in ADAPTIVE_SPLIT_STATUSES and depth < MAX_SPLIT_DEPTH and end > start:
+        middle = (start + end) // 2
+        print(
+            f"La Vinoteca VTEX HTTP {status} en rango {start}-{end}; "
+            f"se divide en {start}-{middle} y {middle + 1}-{end}.",
+            flush=True,
+        )
+        time.sleep(random.uniform(0.25, 0.55))
+        left = _fetch_range(session, start=start, end=middle, metrics=metrics, depth=depth + 1)
+        if left.terminal:
+            return _RangeFetch(
+                left.payload,
+                left.announced_total,
+                terminal=True,
+                split_recovered=True,
+                statuses=(status,) + left.statuses,
+            )
+        time.sleep(random.uniform(0.20, 0.45))
+        right = _fetch_range(session, start=middle + 1, end=end, metrics=metrics, depth=depth + 1)
+        totals = [v for v in (left.announced_total, right.announced_total) if v is not None]
+        return _RangeFetch(
+            left.payload + right.payload,
+            max(totals) if totals else None,
+            terminal=right.terminal and not right.payload,
+            split_recovered=True,
+            statuses=(status,) + left.statuses + right.statuses,
+        )
+
+    raise RuntimeError(f"La Vinoteca VTEX respondió HTTP {status} en rango {start}-{end}.")
 
 
 def _extract_product(item: dict) -> CollectedProduct | None:
@@ -169,23 +247,14 @@ def _collect_products() -> CollectionBatch:
             ensure_budget(f"La Vinoteca VTEX página {page + 1}")
             start = page * PAGE_SIZE
             end = start + PAGE_SIZE - 1
-            response = session.get(
-                SEARCH_ENDPOINT,
-                params={"_from": start, "_to": end, "O": "OrderByNameASC"},
-                timeout=bounded_request_timeout(REQUEST_TIMEOUT),
-            )
-            metrics.add("http", int(response.elapsed.total_seconds() * 1000))
-            if response.status_code == 416:
-                break
-            if response.status_code not in SUCCESS_STATUSES:
-                failed_pages += 1
-                raise RuntimeError(f"La Vinoteca VTEX respondió HTTP {response.status_code} en rango {start}-{end}.")
             try:
-                payload = response.json()
-            except ValueError as exc:
-                raise RuntimeError("La Vinoteca VTEX no devolvió JSON válido.") from exc
-            if not isinstance(payload, list):
-                raise RuntimeError("La Vinoteca VTEX cambió el formato esperado del catálogo.")
+                fetched = _fetch_range(session, start=start, end=end, metrics=metrics)
+            except RuntimeError:
+                failed_pages += 1
+                raise
+            if fetched.terminal and not fetched.payload:
+                break
+            payload = list(fetched.payload)
             pages += 1
             if not payload:
                 break
@@ -213,10 +282,11 @@ def _collect_products() -> CollectionBatch:
                         products[product.url] = product
                 else:
                     products[product.url] = product
-            announced_total = _content_range_total(response)
+            announced_total = fetched.announced_total
             print(
-                f"La Vinoteca VTEX página {page + 1}: HTTP={response.status_code}, "
+                f"La Vinoteca VTEX página {page + 1}: HTTP={'/'.join(map(str, fetched.statuses)) or '?'}, "
                 f"{len(payload)} registros, total={len(products)}"
+                + (", recuperado_split=sí" if fetched.split_recovered else "")
                 + (f", catálogo_anunciado={announced_total}" if announced_total is not None else ""),
                 flush=True,
             )

@@ -56,6 +56,7 @@ class _ResilientPageFetcher:
         self._browser = None
         self._context = None
         self._page = None
+        self._browser_sticky_remaining = 0
 
     def _http_once(self, session: requests.Session, url: str, *, no_cache: bool = False) -> HtmlFetchResult:
         headers = None
@@ -94,23 +95,54 @@ class _ResilientPageFetcher:
     def _browser_fetch(self, url: str) -> HtmlFetchResult:
         ensure_budget('Tienda de Vinos La Reina fallback Chromium')
         self._ensure_browser()
-        response = self._page.goto(url, wait_until='domcontentloaded')
-        try:
-            self._page.wait_for_selector("a[href*='/producto/']", timeout=12_000)
-        except Exception:
-            # Some challenge/interstitial responses settle after DOMContentLoaded.
-            self._page.wait_for_timeout(2_000)
-        html = self._page.content()
-        status = response.status if response is not None else 200
-        if _has_product_markup(html):
-            status = 200
-        return HtmlFetchResult(status_code=status, text=html, source='playwright-fallback')
+        last_status = 0
+        for attempt in range(1, 4):
+            ensure_budget(f'Tienda de Vinos La Reina Chromium intento {attempt}')
+            target = url if attempt == 1 else _cache_bust(url)
+            try:
+                response = self._page.goto(target, wait_until='domcontentloaded')
+                last_status = response.status if response is not None else 200
+                try:
+                    self._page.wait_for_selector("a[href*='/producto/']", timeout=10_000)
+                except Exception:
+                    self._page.wait_for_timeout(1_200 * attempt)
+                html = self._page.content()
+                if _has_product_markup(html):
+                    self._browser_sticky_remaining = 6
+                    return HtmlFetchResult(status_code=200, text=html, source='playwright-fallback')
+            except Exception as exc:
+                print(
+                    f'Tienda de Vinos La Reina Chromium intento {attempt}/3 falló: '
+                    f'{type(exc).__name__}: {exc}',
+                    flush=True,
+                )
+            if attempt < 3:
+                self._page.wait_for_timeout(700 * attempt)
+        raise RuntimeError(
+            f'Tienda de Vinos La Reina Chromium no recuperó catálogo tras 3 intentos '
+            f'(último HTTP={last_status or "sin respuesta"}).'
+        )
 
     def fetch(self, session: requests.Session, url: str, section_name: str, page: int) -> HtmlFetchResult:
+        # Once a 202/interstitial forced Chromium, keep the browser path for a few
+        # pages. This preserves the anti-bot/session cookies instead of challenging
+        # the storefront again on every pagination request.
+        if self._browser_sticky_remaining > 0:
+            try:
+                fetched = self._browser_fetch(url)
+                self._browser_sticky_remaining = max(0, self._browser_sticky_remaining - 1)
+                return fetched
+            except RuntimeError as exc:
+                self._browser_sticky_remaining = 0
+                print(
+                    f'Tienda de Vinos La Reina {section_name} página {page}: '
+                    f'fallback persistente agotado ({exc}); se vuelve a HTTP.',
+                    flush=True,
+                )
+
         first = self._http_once(session, url)
         if first.status_code == 200 and _has_product_markup(first.text):
             return first
-        # A 404 on page >1 is a real pagination terminator and must not wake Chromium.
         if first.status_code == 404 and page > 1:
             return first
 
@@ -125,7 +157,7 @@ class _ResilientPageFetcher:
             return second
 
         reason2 = f'HTTP {second.status_code}' if second.status_code != 200 else 'HTML sin productos'
-        print(f'Tienda de Vinos La Reina {section_name} página {page}: {reason2}; activando fallback Chromium.', flush=True)
+        print(f'Tienda de Vinos La Reina {section_name} página {page}: {reason2}; activando fallback Chromium robusto.', flush=True)
         return self._browser_fetch(url)
 
     def close(self) -> None:
@@ -141,6 +173,7 @@ class _ResilientPageFetcher:
             except Exception:
                 pass
         self._pw = self._browser = self._context = self._page = None
+        self._browser_sticky_remaining = 0
 
 
 class VinosLaReinaCollector:

@@ -1,3 +1,14 @@
+# v6.0.0.1 — Source Resilience Hotfix
+
+- CAV actualiza la ruta de descubrimiento/listado desde `/tienda?...` a la raíz actual `/?...`, manteniendo las fichas `/tienda/producto/...`.
+- La Vinoteca añade recuperación adaptativa ante HTTP 500/502/503/504 de VTEX: una ventana fallida se divide recursivamente antes de declarar fallo.
+- Tienda de Vinos La Reina refuerza el fallback Chromium: hasta 3 intentos y una ventana de navegación persistente tras recuperar un 202/interstitial.
+- La Modelo, La Vinoteca, CAV, Tienda de Vinos La Reina y El Mundo del Vino reutilizan el último snapshot HEALTHY como `STALE` ante fallos externos transitorios.
+- Los intentos fallidos siguen registrados; nunca se persiste un catálogo parcial como si fuera sano.
+- Comparaciones, favoritos y watchlists pueden continuar usando el último catálogo HEALTHY cuando una de estas fuentes externas está temporalmente caída.
+- Sin migraciones nuevas: Alembic permanece en `0013_watchlists`.
+- Suite total: 241 pruebas.
+
 # v6.0.0 — Watchlists
 
 - Primera versión de la rama 6.x orientada a decisiones personales persistentes.
