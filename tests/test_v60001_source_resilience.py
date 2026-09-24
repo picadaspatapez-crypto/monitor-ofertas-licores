@@ -8,10 +8,10 @@ from app.performance import PhaseMetrics
 from app.pipeline.runner import _supports_stale_recovery
 
 
-def test_cav_catalog_query_uses_current_root_route():
+def test_cav_catalog_query_uses_current_store_route():
     url = cav._page_url(0, (("fR[family.name][0]", "Vinos"),))
-    assert url.startswith("https://cav.cl/?")
-    assert "https://cav.cl/tienda?" not in url
+    assert url.startswith("https://cav.cl/tienda?")
+    assert "https://cav.cl/?" not in url
 
 
 @dataclass

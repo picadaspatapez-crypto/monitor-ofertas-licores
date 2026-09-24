@@ -1,0 +1,11 @@
+app/collectors/cav.py
+app/version.py
+tests/test_v60001_source_resilience.py
+tests/test_v60002_cav_route_recovery.py
+tests/test_version.py
+CHANGELOG.md
+README-HOTFIX.md
+README_V6.0.0.2.md
+DEPLOY_V6.0.0.2.md
+TEST_RESULTS_V6.0.0.2.txt
+CHANGED_FILES_V6.0.0.2.txt

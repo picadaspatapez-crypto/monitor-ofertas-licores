@@ -17,7 +17,7 @@ from app.domain import CollectedPriceQuote, CollectedProduct, CollectionBatch, C
 from app.performance import PerformanceSettings, install_resource_blocking
 
 BASE_URL = "https://cav.cl"
-SHOP_URL = f"{BASE_URL}/"
+SHOP_URL = f"{BASE_URL}/tienda"
 PAGE_SIZE = 48
 MAX_PAGES_PER_SHARD = 30
 # La tienda publica actualmente alrededor de mil productos de vino y más de un
@@ -30,11 +30,11 @@ STATIC_EDITORIAL_CEILING = 35
 PRODUCT_LINK_SELECTOR = 'a[href*="/tienda/producto/"]'
 ALGOLIA_HIT_SELECTOR = ".ais-Hits-item, .ais-InfiniteHits-item, [class*='ais-Hits-item']"
 
-# CAV expone actualmente el catálogo/buscador desde la raíz del sitio y
-# mantiene en la URL un estado de búsqueda compatible con InstantSearch:
-# fR[family.name], fR[wine_type.name], hPP, idx, p y q. La búsqueda global se
-# acerca/supera el límite habitual de paginación de Algolia, por lo que el
-# collector no vuelve a recorrer el índice global. Se particiona por familias y,
+# CAV expone el catálogo/buscador filtrable en /tienda. La portada / puede
+# renderizar productos editoriales (ofertas/destacados/liquidación) pero ignora
+# el estado InstantSearch; usarla produce el mismo subconjunto en todos los
+# shards y una falsa cobertura. Conservamos fR[family.name],
+# fR[wine_type.name], hPP, idx, p y q en /tienda y particionamos por familias y,
 # para Vinos, por categoría/tipo.
 DEFAULT_WINE_TYPES = (
     "Tinto",
@@ -285,6 +285,49 @@ def _shards(discovered_wine_types: tuple[str, ...] = ()) -> tuple[_Shard, ...]:
     return tuple(result)
 
 
+def _assert_effective_catalog_url(current_url: str, requested_url: str, *, label: str) -> None:
+    """Evita aceptar silenciosamente una redirección a la portada de CAV."""
+
+    current = urlparse(current_url)
+    requested = urlparse(requested_url)
+    if current.path.rstrip("/") != "/tienda":
+        raise RuntimeError(
+            f"CAV {label} salió de /tienda hacia {current.path or '/'}; "
+            "no se acepta la portada como catálogo filtrado."
+        )
+
+    current_query = parse_qs(current.query, keep_blank_values=True)
+    requested_query = parse_qs(requested.query, keep_blank_values=True)
+    missing: list[str] = []
+    for key, expected in requested_query.items():
+        if not (key.startswith("fR[") or key in {"idx", "p"}):
+            continue
+        if current_query.get(key) != expected:
+            missing.append(key)
+    if missing:
+        raise RuntimeError(
+            f"CAV {label} perdió filtros de catálogo ({', '.join(missing)}); "
+            "se corta antes de parsear una página no segmentada."
+        )
+
+
+def _register_first_page_signature(
+    signatures: dict[tuple[str, ...], list[str]],
+    *,
+    label: str,
+    signature: tuple[str, ...],
+) -> None:
+    """Detecta que varios shards estén viendo el mismo bloque editorial."""
+
+    labels = signatures.setdefault(signature, [])
+    labels.append(label)
+    if signature and len(signature) <= STATIC_EDITORIAL_CEILING and len(labels) >= 3:
+        raise RuntimeError(
+            "CAV repitió exactamente el mismo subconjunto pequeño en tres shards "
+            f"({', '.join(labels[-3:])}); los filtros probablemente no se aplicaron."
+        )
+
+
 def _goto(page: Page, url: str, *, label: str) -> int | None:
     response = page.goto(url, wait_until="domcontentloaded", timeout=BROWSER_NAV_TIMEOUT_MS)
     status = response.status if response is not None else None
@@ -292,6 +335,7 @@ def _goto(page: Page, url: str, *, label: str) -> int | None:
         raise RuntimeError(f"CAV personal limitado por HTTP {status} en {label}; se corta sin fan-out.")
     if status is not None and not (200 <= status < 300):
         raise RuntimeError(f"CAV personal respondió HTTP {status} en {label}.")
+    _assert_effective_catalog_url(page.url, url, label=label)
     return status
 
 
@@ -302,6 +346,7 @@ def _collect_products() -> CollectionBatch:
     total_pages = total_cards = duplicates = 0
     section_stats: list[SectionStats] = []
     source_modes: set[str] = set()
+    first_page_signatures: dict[tuple[str, ...], list[str]] = {}
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -376,6 +421,12 @@ def _collect_products() -> CollectionBatch:
                         break
 
                     signature = tuple(sorted(parsed))
+                    if page_number == 0:
+                        _register_first_page_signature(
+                            first_page_signatures,
+                            label=shard.label,
+                            signature=signature,
+                        )
                     if page_number == 1 and signature == previous_signature and not tolerated_zero_one_alias:
                         tolerated_zero_one_alias = True
                         print(

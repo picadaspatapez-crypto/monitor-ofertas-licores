@@ -1,3 +1,11 @@
+# v6.0.0.2 — CAV Route Recovery
+
+- Corrige una regresión de v6.0.0.1: el catálogo filtrable de CAV vuelve a `/tienda`; la portada `/` solo expone bloques editoriales y no aplica los shards InstantSearch.
+- Verifica que Playwright permanezca en `/tienda` y conserve los filtros `fR[...]`, `idx` y `p` antes de parsear.
+- Añade un guard de fingerprint: tres shards con el mismo subconjunto pequeño disparan error temprano en vez de consumir ~10 minutos recorriendo contenido repetido.
+- Conserva la recuperación STALE de v6.0.0.1: si CAV vuelve a bloquear o fallar, se reutiliza el último snapshot HEALTHY.
+- Sin migraciones ni variables nuevas.
+
 # v6.0.0.1 — Source Resilience Hotfix
 
 - CAV actualiza la ruta de descubrimiento/listado desde `/tienda?...` a la raíz actual `/?...`, manteniendo las fichas `/tienda/producto/...`.

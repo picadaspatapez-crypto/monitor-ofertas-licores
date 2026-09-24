@@ -1,0 +1,6 @@
+v6.0.0.2 — CAV Route Recovery
+
+pytest -q: 246 passed
+python -m compileall -q app tests: OK
+Alembic: sin migración nueva; head permanece 0013_watchlists
+Collectors modificados: cav
