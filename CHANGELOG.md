@@ -1,3 +1,15 @@
+# v6.0.0.3 — WooCommerce Availability-Aware Guard
+
+- Corrige falsos `parser WooCommerce no confiable` cuando una página contiene muchos productos explícitamente `AGOTADO`/`sin stock`.
+- El guard estructural deja de comparar productos activos contra todas las URLs del listado: primero separa tarjetas agotadas reconocidas y luego evalúa cobertura sólo sobre las tarjetas activas esperadas.
+- Los agotados reconocidos siguen excluidos del catálogo activo; no se relaja la política de disponibilidad.
+- El umbral fail-closed de 50% se mantiene, ahora aplicado exclusivamente a productos activos esperados y con redondeo hacia arriba.
+- El parser reconoce disponibilidad textual (`AGOTADO`, `sin stock`, `out of stock`, `sold out`) y clases WooCommerce equivalentes.
+- Evita usar etiquetas de disponibilidad como nombre de producto.
+- Regresión cubierta para Tienda de Vinos La Reina y El Brindis.
+- Sin migraciones ni variables nuevas; Alembic permanece en `0013_watchlists`.
+- Suite total: 250 pruebas.
+
 # v6.0.0.2 — CAV Route Recovery
 
 - Corrige una regresión de v6.0.0.1: el catálogo filtrable de CAV vuelve a `/tienda`; la portada `/` solo expone bloques editoriales y no aplica los shards InstantSearch.

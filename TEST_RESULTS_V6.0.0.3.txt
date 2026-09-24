@@ -1,0 +1,7 @@
+v6.0.0.3 — WooCommerce Availability-Aware Guard
+
+pytest -q: 250 passed
+python -m compileall -q app tests: OK
+Alembic: 0013_watchlists (head); sin migración nueva
+Collectors modificados directamente: ninguno
+Parser compartido modificado: http_catalog.parse_woocommerce_cards (El Brindis + Tienda de Vinos La Reina)

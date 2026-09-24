@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import time
 import unicodedata
@@ -17,6 +18,7 @@ from app.domain import CollectedProduct, CollectionBatch, CollectionStats, Secti
 from app.performance import PhaseMetrics
 
 _PRICE_RE = re.compile(r"\$\s*([\d.]+)")
+_OUT_OF_STOCK_MARKERS = ('agotado', 'sin stock', 'out of stock', 'sold out')
 
 @dataclass(frozen=True)
 class HtmlCatalogSection:
@@ -71,6 +73,21 @@ def _distinct_product_urls(node:Tag, *, base_url:str, markers:tuple[str,...])->s
             urls.add(canonical(base_url, href))
     return urls
 
+def _is_explicitly_out_of_stock(node:Tag)->bool:
+    """Return True only for explicit availability markers inside one product card.
+
+    WooCommerce themes commonly keep sold-out cards in category listings with their
+    normal product URL and price. Those cards are valid catalog structure but must not
+    be persisted as active offers. Structural coverage therefore needs to distinguish
+    them from cards the parser genuinely failed to understand.
+    """
+    value=fold(text(node.get_text(' ',strip=True)))
+    if any(marker in value for marker in _OUT_OF_STOCK_MARKERS):
+        return True
+    classes=' '.join(str(v) for v in (node.get('class') or ()))
+    class_value=fold(classes).replace('_','-')
+    return any(token in class_value for token in ('outofstock','out-of-stock','sold-out'))
+
 def _nearest_single_product_card(anchor:Tag, *, base_url:str, markers:tuple[str,...])->Tag:
     """Return the tightest ancestor that contains price text and a single product URL.
 
@@ -86,7 +103,7 @@ def _nearest_single_product_card(anchor:Tag, *, base_url:str, markers:tuple[str,
         if len(urls)>1:
             break
         fallback=parent
-        if len(urls)==1 and prices(text(parent.get_text(' ',strip=True))):
+        if len(urls)==1 and (prices(text(parent.get_text(' ',strip=True))) or _is_explicitly_out_of_stock(parent)):
             return parent
     return fallback
 
@@ -121,10 +138,14 @@ def parse_woocommerce_cards(html:str,*,store_name:str,base_url:str,section_name:
         if not _has_product_path(href,product_path_markers):continue
         url=canonical(base_url,href); raw_urls.add(url); anchors_by_url.setdefault(url,[]).append(a)
 
-    out:dict[str,CollectedProduct]={}; candidates=0
-    bad_titles={'anadir al carrito','añadir al carrito','ver producto','leer mas','read more'}
+    out:dict[str,CollectedProduct]={}; candidates=0; out_of_stock_urls:set[str]=set()
+    bad_titles={
+        'anadir al carrito','añadir al carrito','ver producto','leer mas','read more',
+        'agotado','sin stock','out of stock','sold out',
+    }
     for url,anchors in anchors_by_url.items():
-        # Prefer the anchor carrying the product name; image/add-to-cart anchors are common too.
+        # Prefer the anchor carrying the product name; image/add-to-cart/availability anchors
+        # are common too, so explicit stock labels are never accepted as titles.
         title_anchor=None; name=''
         for a in anchors:
             candidate=text(a.get_text(' ',strip=True))
@@ -139,17 +160,34 @@ def parse_woocommerce_cards(html:str,*,store_name:str,base_url:str,section_name:
             title_node=card.select_one('.woocommerce-loop-product__title,.product-title,.name.product-title,h2,h3,h4')
             if isinstance(title_node,Tag):name=text(title_node.get_text(' ',strip=True))
         if len(name)<4:continue
+
+        # Sold-out cards are structurally valid and intentionally excluded from active offers.
+        # Count them as understood cards before evaluating active-price coverage.
+        if _is_explicitly_out_of_stock(card):
+            out_of_stock_urls.add(url)
+            candidates+=1
+            continue
+
         current,regular=_semantic_prices(card)
         if current is None:continue
         candidates+=1
-        f=fold(text(card.get_text(' ',strip=True)))
-        if any(x in f for x in ('agotado','sin stock','out of stock')):continue
         out[url]=CollectedProduct(store=store_name,name=name[:500],url=url,current_price=current,regular_price=regular,discount_pct=discount(regular,current),source_sections=(section_name,))
 
-    # Structural sanity check: if the HTML exposes many distinct product URLs but almost none
-    # could be parsed, fail closed rather than persisting a one-card-per-page false catalog.
-    if len(raw_urls)>=4 and len(out)<max(2,int(len(raw_urls)*0.5)):
-        raise RuntimeError(f'parser WooCommerce no confiable: urls_producto={len(raw_urls)}, productos_parseados={len(out)}')
+    # Availability-aware structural sanity check. A sold-out card is not an active product
+    # parsing failure, but every remaining product URL is expected to be parseable as an offer.
+    # We keep the previous 50% fail-closed threshold, now applied to active cards only.
+    active_urls=raw_urls-out_of_stock_urls
+    if len(raw_urls)>=4 and active_urls:
+        required=max(1,math.ceil(len(active_urls)*0.5))
+        parsed_active=len(set(out).intersection(active_urls))
+        if parsed_active<required:
+            unresolved=len(active_urls)-parsed_active
+            raise RuntimeError(
+                'parser WooCommerce no confiable: '
+                f'urls_producto={len(raw_urls)}, activos_esperados={len(active_urls)}, '
+                f'agotados_reconocidos={len(out_of_stock_urls)}, productos_parseados={parsed_active}, '
+                f'no_reconocidos={unresolved}'
+            )
     return out,candidates
 
 def parse_cards(html:str,*,store_name:str,base_url:str,section_name:str,product_path_markers:tuple[str,...]=('/product','/producto','/products/')) -> tuple[dict[str,CollectedProduct],int]:

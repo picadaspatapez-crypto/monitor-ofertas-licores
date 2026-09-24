@@ -36,3 +36,29 @@ def test_elbrindis_uses_http_and_specialized_parser_configuration():
     assert ElBrindisCollector.metadata.requires_browser is False
     # Smoke test that the collector remains registered around the public HTTP catalog design.
     assert ElBrindisCollector.key=='elbrindis'
+
+
+def test_explicit_sold_out_cards_do_not_trip_structural_guard():
+    html='''
+    <div class="products row">
+      <div class="product-small col"><div class="product-small box">
+        <p class="name product-title"><a href="https://elbrindis.cl/producto/activo">Whisky Activo 750cc</a></p>
+        <span class="price">$12.990</span><a href="https://elbrindis.cl/producto/activo">Añadir al carrito</a>
+      </div></div>
+      <div class="product-small col outofstock"><div class="product-small box">
+        <p class="name product-title"><a href="https://elbrindis.cl/producto/oos1">Whisky Agotado 1</a></p>
+        <span class="price">$13.990</span><a href="https://elbrindis.cl/producto/oos1">AGOTADO</a>
+      </div></div>
+      <div class="product-small col outofstock"><div class="product-small box">
+        <p class="name product-title"><a href="https://elbrindis.cl/producto/oos2">Whisky Agotado 2</a></p>
+        <span class="price">$14.990</span><a href="https://elbrindis.cl/producto/oos2">AGOTADO</a>
+      </div></div>
+      <div class="product-small col outofstock"><div class="product-small box">
+        <p class="name product-title"><a href="https://elbrindis.cl/producto/oos3">Whisky Agotado 3</a></p>
+        <span class="price">$15.990</span><a href="https://elbrindis.cl/producto/oos3">AGOTADO</a>
+      </div></div>
+    </div>'''
+    products,cards=parse_woocommerce_cards(html,store_name='El Brindis',base_url='https://elbrindis.cl',section_name='Whisky')
+    assert cards==4
+    assert len(products)==1
+    assert next(iter(products.values())).name=='Whisky Activo 750cc'

@@ -1,6 +1,6 @@
 # Roadmap — Monitor de Ofertas de Licores
 
-## Estado actual: v6.0.0.1 — Watchlists + Source Resilience
+## Estado actual: v6.0.0.3 — Watchlists + Source Resilience
 
 La expansión v5.9 quedó implementada en dos olas y cerrada con una capa de auditoría operativa.
 
@@ -59,6 +59,14 @@ Implementado:
 ## v6.0.0.1 — Source Resilience Hotfix
 
 Estabilización operativa sin ampliar alcance funcional: CAV adapta su ruta de catálogo, La Vinoteca recupera ventanas VTEX 5xx por división adaptativa, Vinos La Reina refuerza su sesión Chromium y las fuentes externas conocidas pueden reutilizar el último snapshot HEALTHY como `STALE` ante caídas transitorias. No hay migraciones nuevas.
+
+## v6.0.0.2 — CAV Route Recovery
+
+Corrige la regresión de ruta de CAV y devuelve el collector a `/tienda`, conservando los guards de ruta/filtros y la recuperación STALE.
+
+## v6.0.0.3 — WooCommerce Availability-Aware Guard
+
+El parser compartido de El Brindis y Tienda de Vinos La Reina reconoce explícitamente tarjetas agotadas y las excluye del denominador de cobertura activa. Los agotados no se persisten y las tarjetas activas siguen protegidas por un guard fail-closed.
 
 ## Siguiente: v6.0.1 — Alertas configurables
 
