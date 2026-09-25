@@ -1,3 +1,10 @@
+# v6.0.0.4 — Browser Terminal 404 Recovery
+
+- Vinos La Reina: un 404 real recibido por Chromium se propaga al loop de catálogo como fin terminal de paginación.
+- Evita reintentos Playwright innecesarios y falsos `RuntimeError` al pedir la página posterior a la última válida.
+- Mantiene intactos Availability-Aware Guard, CAV, watchlists y recuperación STALE.
+- Sin migraciones nuevas.
+
 # v6.0.0.3 — WooCommerce Availability-Aware Guard
 
 - Corrige falsos `parser WooCommerce no confiable` cuando una página contiene muchos productos explícitamente `AGOTADO`/`sin stock`.

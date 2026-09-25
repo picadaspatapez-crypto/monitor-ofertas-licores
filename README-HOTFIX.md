@@ -1,3 +1,3 @@
-# Hotfix v6.0.0.3 — WooCommerce Availability-Aware Guard
+# v6.0.0.4 hotfix
 
-Aplicar sobre v6.0.0.2. Corrige el guard estructural del parser WooCommerce para reconocer tarjetas agotadas sin persistirlas ni confundirlas con fallos de parseo. Afecta únicamente al parser compartido por El Brindis y Tienda de Vinos La Reina, más versión/tests/documentación.
+Aplicar sobre v6.0.0.3. Corrige el manejo de HTTP 404 terminal cuando Vinos La Reina está navegando por Chromium/Playwright, evitando que un final de paginación normal se convierta en una categoría fallida.

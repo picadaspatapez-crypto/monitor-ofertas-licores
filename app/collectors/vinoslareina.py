@@ -102,6 +102,14 @@ class _ResilientPageFetcher:
             try:
                 response = self._page.goto(target, wait_until='domcontentloaded')
                 last_status = response.status if response is not None else 200
+
+                # A real 404 after one or more valid catalog pages is the normal
+                # end-of-pagination signal. Do not retry it inside Chromium and do
+                # not convert it into a browser-recovery RuntimeError: the shared
+                # catalog loop already knows how to terminate cleanly on 404.
+                if last_status == 404:
+                    return HtmlFetchResult(status_code=404, text='', source='playwright-fallback')
+
                 try:
                     self._page.wait_for_selector("a[href*='/producto/']", timeout=10_000)
                 except Exception:

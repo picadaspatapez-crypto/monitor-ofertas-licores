@@ -1,0 +1,7 @@
+v6.0.0.4 — Browser Terminal 404 Recovery
+
+pytest -q: 252 passed
+python -m compileall -q app tests: OK
+Alembic head: 0013_watchlists
+New migrations: none
+Collector changed: vinoslareina only

@@ -88,3 +88,5 @@ El parser compartido de El Brindis y Tienda de Vinos La Reina reconoce explícit
 - ROI;
 - precio de salida configurable;
 - evitar recomendaciones basadas en comisiones o costos inventados.
+
+- v6.0.0.4: hotfix de 404 terminal en fallback Chromium de Vinos La Reina.

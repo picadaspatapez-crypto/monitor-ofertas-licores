@@ -1,0 +1,9 @@
+app/collectors/vinoslareina.py
+app/version.py
+tests/test_version.py
+tests/test_v5912_vinos_la_reina_resilience.py
+DEPLOY_V6.0.0.4.md
+README_V6.0.0.4.md
+README-HOTFIX.md
+CHANGELOG.md
+ROADMAP.md

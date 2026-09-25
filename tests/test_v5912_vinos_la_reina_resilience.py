@@ -65,3 +65,51 @@ def test_terminal_404_does_not_launch_browser(monkeypatch):
     result = fetcher.fetch(session, 'https://vinoslareina.cl/categoria-producto/vinos/page/99/', 'Vinos', 99)
     assert result.status_code == 404
     assert called['browser'] is False
+
+
+def test_sticky_browser_terminal_404_is_returned_without_http_retry(monkeypatch):
+    fetcher = _ResilientPageFetcher()
+    fetcher._browser_sticky_remaining = 3
+    monkeypatch.setattr(
+        fetcher,
+        '_browser_fetch',
+        lambda url: HtmlFetchResult(404, '', 'playwright-fallback'),
+    )
+    session = FakeSession([])
+    result = fetcher.fetch(
+        session,
+        'https://vinoslareina.cl/categoria-producto/vinos/page/21/',
+        'Vinos',
+        21,
+    )
+    assert result.status_code == 404
+    assert result.source == 'playwright-fallback'
+    assert session.calls == []
+
+
+def test_browser_fetch_treats_real_404_as_terminal_not_recovery_failure(monkeypatch):
+    class FakeNavResponse:
+        status = 404
+
+    class FakePage:
+        def __init__(self):
+            self.goto_calls = 0
+
+        def goto(self, url, wait_until=None):
+            self.goto_calls += 1
+            return FakeNavResponse()
+
+        def wait_for_timeout(self, ms):
+            raise AssertionError('404 should not be retried inside Chromium')
+
+    fetcher = _ResilientPageFetcher()
+    fake_page = FakePage()
+    fetcher._page = fake_page
+    monkeypatch.setattr(fetcher, '_ensure_browser', lambda: None)
+
+    result = fetcher._browser_fetch(
+        'https://vinoslareina.cl/categoria-producto/espumantes/page/3/'
+    )
+    assert result.status_code == 404
+    assert result.source == 'playwright-fallback'
+    assert fake_page.goto_calls == 1
